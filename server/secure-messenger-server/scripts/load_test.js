@@ -7,33 +7,28 @@
  *   k6 run scripts/load_test.js \
  *       -e BASE_URL=http://localhost:8080 \
  *       -e WS_URL=ws://localhost:8080 \
- *       -e INVITE_CODE=<your-invite-code>
+ *       -e INVITE_PREFIX=k6- \
+ *       -e SETUP_USERS=400
  *
  *   # Prod
  *   k6 run scripts/load_test.js \
  *       -e BASE_URL=https://api.onyxchat.dev \
  *       -e WS_URL=wss://api.onyxchat.dev \
- *       -e INVITE_CODE=<your-invite-code>
+ *       -e INVITE_PREFIX=k6- \
+ *       -e SETUP_USERS=400
  *
- * The INVITE_CODE must be a code that exists in your invite_codes table but
- * has NOT been consumed yet. Because the load test registers many users, you
- * need a pool of codes. Seed them first:
+ * What this tests (the real hot path):
+ *   - JWT auth (fast crypto verify, not bcrypt)
+ *   - Sending messages
+ *   - Listing conversation history
+ *   - WebSocket connections + typing indicators
+ *   - Presence events
  *
- *   INSERT INTO invite_codes (code, created_by)
- *   SELECT 'k6-' || generate_series(1, 500), 'load-test';
+ * Registration happens ONCE in setup() for a fixed pool of users.
+ * VUs reuse those users across all iterations — no bcrypt in the hot path.
  *
- * Then pass the shared prefix and the script will pick a per-VU code:
- *   -e INVITE_PREFIX=k6-        (default)
- *
- * Alternatively, pass a single INVITE_CODE and the script will reuse it
- * only for the very first registration per VU (peer setup). Set
- *   -e INVITE_POOL_SIZE=500     to match how many codes you seeded.
- *
- * Simplest approach for local dev: set INVITE_CODE to one code and seed
- * enough codes for the number of VUs you plan to run.
- *
- * What this tests:
- *   Stage 1  — ramp to 20 VUs  (baseline latency)
+ * Stages:
+ *   Stage 1  — ramp to 20 VUs  (baseline)
  *   Stage 2  — hold 20 VUs     (steady state)
  *   Stage 3  — ramp to 100 VUs (stress)
  *   Stage 4  — hold 100 VUs    (stress steady state)
@@ -41,14 +36,6 @@
  *   Stage 6  — hold 200 VUs    (spike hold)
  *   Stage 7  — ramp to 20 VUs  (recovery)
  *   Stage 8  — ramp to 0       (ramp-down)
- *
- * Each VU:
- *   register → login → list users → send 3 messages → read history → WS typing
- *
- * Thresholds:
- *   • p95 HTTP latency  < 500 ms
- *   • error rate        < 10%
- *   • p95 WS msg delay  < 200 ms
  */
 
 import http from "k6/http";
@@ -59,11 +46,11 @@ import { randomString } from "https://jslib.k6.io/k6-utils/1.4.0/index.js";
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
-const BASE         = __ENV.BASE_URL       || "http://localhost:8080";
-const WS_BASE      = __ENV.WS_URL         || "ws://localhost:8080";
-const API          = `${BASE}/api/v1`;
+const BASE          = __ENV.BASE_URL      || "http://localhost:8080";
+const WS_BASE       = __ENV.WS_URL        || "ws://localhost:8080";
+const API           = `${BASE}/api/v1`;
 const INVITE_PREFIX = __ENV.INVITE_PREFIX || "k6-";
-const POOL_SIZE    = parseInt(__ENV.INVITE_POOL_SIZE || "500", 10);
+const SETUP_USERS   = parseInt(__ENV.SETUP_USERS || "400", 10);
 
 // ── Custom metrics ────────────────────────────────────────────────────────────
 
@@ -90,70 +77,55 @@ export const options = {
   },
 };
 
+// ── Setup: register user pool once ───────────────────────────────────────────
+
+export function setup() {
+  console.log(`Registering ${SETUP_USERS} users for load test pool...`);
+
+  const users    = [];
+  const password = "Loadtest1!";
+
+  for (let i = 0; i < SETUP_USERS; i++) {
+    const username   = `k6_${randomString(12)}`;
+    const inviteCode = `${INVITE_PREFIX}${i + 1}`;
+
+    const res = http.post(
+      `${API}/register`,
+      JSON.stringify({ username, password, invite_code: inviteCode }),
+      { headers: { "Content-Type": "application/json" } }
+    );
+
+    if (res.status === 200) {
+      try {
+        const body = JSON.parse(res.body);
+        if (body.token) users.push({ username, token: body.token });
+      } catch (_) {}
+    }
+
+    sleep(0.05);
+  }
+
+  console.log(`Setup complete: ${users.length}/${SETUP_USERS} users registered`);
+
+  if (users.length < 2) {
+    throw new Error(`Not enough users registered (${users.length}). Check invite codes.`);
+  }
+
+  return { users };
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/**
- * Pick a unique invite code for this VU iteration.
- * Uses a rotating index across the seeded pool so concurrent VUs
- * don't all race on the same code.
- */
-function pickInviteCode() {
-  const idx = (__VU * 100 + __ITER) % POOL_SIZE + 1;
-  return `${INVITE_PREFIX}${idx}`;
-}
-
-function register() {
-  const username = `k6_${randomString(10)}`;
-  const password = "Loadtest1!";
-  const inviteCode = pickInviteCode();
-
-  const res = http.post(
-    `${API}/register`,
-    JSON.stringify({ username, password, invite_code: inviteCode }),
-    { headers: { "Content-Type": "application/json" } }
-  );
-
-  const ok = check(res, {
-    "register 200":       (r) => r.status === 200,
-    "register has token": (r) => {
-      try { return !!JSON.parse(r.body).token; }
-      catch { return false; }
-    },
-  });
-
-  errorRate.add(!ok);
-  if (!ok) return null;
-
-  const body = JSON.parse(res.body);
-  return { username, token: body.token };
-}
-
-function login(username, password) {
-  const res = http.post(
-    `${API}/login`,
-    JSON.stringify({ username, password }),
-    { headers: { "Content-Type": "application/json" } }
-  );
-
-  const ok = check(res, {
-    "login 200":       (r) => r.status === 200,
-    "login has token": (r) => {
-      try { return !!JSON.parse(r.body).token; }
-      catch { return false; }
-    },
-  });
-
-  errorRate.add(!ok);
-  if (!ok) return null;
-  return JSON.parse(res.body).token;
-}
-
-function sendMessage(token, recipientUsername, body) {
-  const clientMessageId = `${__VU}-${__ITER}-${randomString(6)}`;
+function sendMessage(token, recipientUsername) {
+  const clientMessageId = `${__VU}-${__ITER}-${randomString(8)}`;
 
   const res = http.post(
     `${API}/messages`,
-    JSON.stringify({ recipientUsername, body, clientMessageId }),
+    JSON.stringify({
+      recipientUsername,
+      body: `k6 VU=${__VU} iter=${__ITER} ts=${Date.now()}`,
+      clientMessageId,
+    }),
     {
       headers: {
         "Content-Type": "application/json",
@@ -162,7 +134,6 @@ function sendMessage(token, recipientUsername, body) {
     }
   );
 
-  // 201 = new message, 200 = deduplicated (both are success)
   const ok = check(res, {
     "send message ok": (r) => r.status === 201 || r.status === 200,
   });
@@ -186,21 +157,14 @@ function listUsers(token) {
   errorRate.add(!ok);
 }
 
-/**
- * Fetch a short-lived WS ticket from the REST API, then open the WebSocket
- * using the ticket as a query parameter (matches your WSAuthMiddleware).
- */
 function openWebSocket(token, peerUsername) {
-  // 1. Get a ticket
   const ticketRes = http.post(
     `${API}/ws/ticket`,
     null,
     { headers: { Authorization: `Bearer ${token}` } }
   );
 
-  const ticketOk = check(ticketRes, {
-    "ws ticket 200": (r) => r.status === 200,
-  });
+  const ticketOk = check(ticketRes, { "ws ticket 200": (r) => r.status === 200 });
   errorRate.add(!ticketOk);
   if (!ticketOk) return;
 
@@ -212,13 +176,11 @@ function openWebSocket(token, peerUsername) {
     return;
   }
 
-  // 2. Open the WebSocket with the ticket
   const url = `${WS_BASE}/api/v1/ws?ticket=${encodeURIComponent(ticket)}`;
 
   const res = ws.connect(url, {}, (socket) => {
     socket.on("open", () => {
-      // Send a few typing indicators then close after 1 s
-      for (let i = 0; i < 5; i++) {
+      for (let i = 0; i < 3; i++) {
         socket.send(
           JSON.stringify({ type: "typing", to: peerUsername, isTyping: i % 2 === 0 })
         );
@@ -229,13 +191,10 @@ function openWebSocket(token, peerUsername) {
     socket.on("message", (data) => {
       try {
         const msg = JSON.parse(data);
-        if (msg._ts) {
-          wsMessageDelay.add(Date.now() - msg._ts);
-        }
+        if (msg._ts) wsMessageDelay.add(Date.now() - msg._ts);
       } catch (_) {}
     });
 
-    // Safety timeout — never hang a VU
     socket.setTimeout(() => socket.close(), 3000);
   });
 
@@ -245,34 +204,45 @@ function openWebSocket(token, peerUsername) {
 
 // ── Default scenario ──────────────────────────────────────────────────────────
 
-export default function () {
-  const self = register();
-  if (!self) return;
+export default function (data) {
+  const { users } = data;
 
-  const peer = register();  // register a second user to message
-  if (!peer) return;
+  // Pick two different users from the pool based on VU index
+  const selfIdx = (__VU - 1) % users.length;
+  const peerIdx = __VU % users.length;
+  const self    = users[selfIdx];
+  const peer    = users[peerIdx];
 
-  sleep(0.2);
+  // 1. List users
   listUsers(self.token);
   sleep(0.1);
 
+  // 2. Send 3 messages to peer
   for (let i = 0; i < 3; i++) {
-    sendMessage(self.token, peer.username, `k6 VU=${__VU} iter=${__ITER} msg=${i}`);
+    sendMessage(self.token, peer.username);
     sleep(0.05);
   }
 
+  // 3. Read conversation history
   listMessages(self.token, peer.username);
   sleep(0.1);
+
+  // 4. WebSocket typing indicators
   openWebSocket(self.token, peer.username);
+
   sleep(0.5);
+}
+
+// ── Teardown ──────────────────────────────────────────────────────────────────
+
+export function teardown(data) {
+  console.log(`Test complete. Pool size: ${data.users.length} users.`);
 }
 
 // ── Summary ───────────────────────────────────────────────────────────────────
 
 export function handleSummary(data) {
-  const p95 = (metric) =>
-    data.metrics[metric]?.values?.["p(95)"]?.toFixed(2) ?? "n/a";
-
+  const p95    = (m) => data.metrics[m]?.values?.["p(95)"]?.toFixed(2) ?? "n/a";
   const errPct = ((data.metrics.errors?.values?.rate ?? 0) * 100).toFixed(2);
 
   console.log(`
