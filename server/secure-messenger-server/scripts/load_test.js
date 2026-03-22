@@ -179,7 +179,9 @@ function openWebSocket(token, peerUsername) {
 
   const url = `${WS_BASE}/api/v1/ws?ticket=${encodeURIComponent(ticket)}`;
 
-  const res = ws.connect(url, {}, (socket) => {
+  const res = ws.connect(url, {
+    headers: { "Origin": "https://onyxchat.dev" },
+  }, (socket) => {
     socket.on("open", () => {
       for (let i = 0; i < 3; i++) {
         socket.send(
