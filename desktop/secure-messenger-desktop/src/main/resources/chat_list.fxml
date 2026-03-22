@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.scene.layout.*?>
+<?import javafx.scene.control.*?>
+
+<VBox xmlns:fx="http://javafx.com/fxml"
+      fx:controller="com.cole.securechat.ui.ChatListController"
+      prefWidth="220">
+
+    <Label text="Contacts"
+           style="-fx-font-weight: bold; -fx-padding: 8;" />
+
+    <ListView fx:id="contactsList"
+              VBox.vgrow="ALWAYS" />
+
+</VBox>

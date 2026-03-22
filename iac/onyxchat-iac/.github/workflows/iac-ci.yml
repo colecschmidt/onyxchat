@@ -1,0 +1,110 @@
+name: IaC CI
+
+on:
+  pull_request:
+  push:
+    branches: ["main", "master"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write      # needed for OIDC to run terraform plan against AWS
+  pull-requests: write # needed to post plan output as a PR comment
+
+env:
+  AWS_REGION: us-east-1
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: fmt
+        run: terraform fmt -check -diff -recursive
+
+      - name: configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: init
+        run: terraform init -input=false
+
+      - name: validate
+        run: terraform validate
+
+      - name: plan
+        id: plan
+        run: |
+          terraform plan \
+            -var="image_uri=placeholder/image:ci" \
+            -var="existing_rds_sg_id=${{ secrets.TF_VAR_EXISTING_RDS_SG_ID }}" \
+            -var="redis_auth_token=${{ secrets.TF_VAR_REDIS_AUTH_TOKEN }}" \
+            -var="billing_email=${{ secrets.TF_VAR_BILLING_EMAIL }}" \
+            -input=false \
+            -no-color \
+            -detailed-exitcode \
+            -out=tfplan 2>&1 | tee plan.txt
+          echo "exitcode=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+
+      - name: upload plan artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-${{ github.run_id }}
+          path: tfplan
+          retention-days: 7
+
+      - name: post plan to PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const plan = fs.readFileSync('plan.txt', 'utf8');
+            const truncated = plan.length > 60000
+              ? plan.slice(0, 60000) + '\n\n... (truncated)'
+              : plan;
+            const body = `## Terraform Plan\n\`\`\`hcl\n${truncated}\n\`\`\``;
+
+            const { data: comments } = await github.rest.issues.listComments({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+            });
+            const existing = comments.find(c =>
+              c.user.login === 'github-actions[bot]' &&
+              c.body.startsWith('## Terraform Plan')
+            );
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                comment_id: existing.id,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body,
+              });
+            }
+
+      - name: fail on plan error
+        if: steps.plan.outputs.exitcode != '0' && steps.plan.outputs.exitcode != '2'
+        run: exit 1
+
+      - name: apply
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: terraform apply -auto-approve -input=false tfplan

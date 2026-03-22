@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+<?import javafx.geometry.*?>
+<?import javafx.scene.shape.Circle?>
+
+<BorderPane fx:controller="com.cole.securechat.ui.ChatWindowController"
+            xmlns="http://javafx.com/javafx"
+            xmlns:fx="http://javafx.com/fxml">
+
+    <!-- ================= LEFT SIDEBAR ================= -->
+    <left>
+        <VBox spacing="8" styleClass="sidebar">
+            <Label text="Contacts" styleClass="sidebar-header"/>
+
+            <ListView fx:id="contactsList"
+                      styleClass="contacts-list"
+                      VBox.vgrow="ALWAYS"/>
+
+            <!-- Logout button at bottom -->
+            <Button fx:id="logoutButton"
+                    text="Logout"
+                    onAction="#handleLogout"
+                    styleClass="sidebar-logout-button"/>
+        </VBox>
+    </left>
+
+    <!-- ================= CENTER ================= -->
+    <center>
+        <VBox>
+
+            <!-- === TOP BAR === -->
+            <HBox spacing="10" alignment="CENTER_LEFT"
+                  styleClass="chat-topbar">
+                <Circle fx:id="activeStatus" radius="5"
+                        styleClass="presence-dot"/>
+                <Label fx:id="activeConversationLabel"
+                       text="Conversation"
+                       styleClass="chat-title"/>
+                <Pane HBox.hgrow="ALWAYS"/>
+
+                <Button text="⋮" fx:id="menuButton"
+                        styleClass="icon-button"/>
+            </HBox>
+
+            <!-- === MESSAGE AREA === -->
+            <ScrollPane fx:id="messageScroll"
+                        fitToWidth="true"
+                        styleClass="message-scroll"
+                        VBox.vgrow="ALWAYS">
+                <VBox fx:id="messageContainer"
+                      spacing="12"
+                      fillWidth="true"
+                      styleClass="message-container">
+                    <padding>
+                        <Insets top="16" right="16" bottom="16" left="16"/>
+                    </padding>
+                </VBox>
+            </ScrollPane>
+
+            <!-- Typing label (appears above input when active) -->
+            <Label fx:id="typingLabel"
+                   text=""
+                   visible="false"
+                   styleClass="typing-label"/>
+
+            <!-- === TYPING AREA === -->
+            <HBox spacing="12"
+                  alignment="CENTER_LEFT"
+                  styleClass="typing-area">
+                <padding>
+                    <Insets top="12" right="12" bottom="12" left="12"/>
+                </padding>
+
+                <TextField fx:id="messageField"
+                           promptText="Type a message…"
+                           HBox.hgrow="ALWAYS"
+                           styleClass="message-input"/>
+
+                <Button fx:id="sendButton"
+                        text="Send"
+                        styleClass="send-button"/>
+            </HBox>
+        </VBox>
+    </center>
+</BorderPane>

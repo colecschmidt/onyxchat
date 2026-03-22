@@ -1,0 +1,20 @@
+# Terraform state (never commit these)
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+
+# Var files with real values
+terraform.tfvars
+*.auto.tfvars
+
+# Crash logs
+crash.log
+
+# Override files
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.wrangler/cache/pages.json
+.wrangler/cache/wrangler-account.json
