@@ -12,7 +12,6 @@
 **/wrangler.toml
 
 # Go
-**/server
 !**/cmd/
 **/*.exe
 
