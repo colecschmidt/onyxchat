@@ -246,30 +246,24 @@ function openWebSocket(token, peerUsername) {
 // ── Default scenario ──────────────────────────────────────────────────────────
 
 export default function () {
-  // 1. Register
   const self = register();
   if (!self) return;
 
-  sleep(0.2);
+  const peer = register();  // register a second user to message
+  if (!peer) return;
 
-  // 2. List users
+  sleep(0.2);
   listUsers(self.token);
   sleep(0.1);
 
-  // 3. Send 3 messages to self (simplest way to exercise the endpoint without
-  //    needing a second registered user in every iteration)
   for (let i = 0; i < 3; i++) {
-    sendMessage(self.token, self.username, `k6 VU=${__VU} iter=${__ITER} msg=${i}`);
+    sendMessage(self.token, peer.username, `k6 VU=${__VU} iter=${__ITER} msg=${i}`);
     sleep(0.05);
   }
 
-  // 4. Read conversation history
-  listMessages(self.token, self.username);
+  listMessages(self.token, peer.username);
   sleep(0.1);
-
-  // 5. WebSocket typing indicators
-  openWebSocket(self.token, self.username);
-
+  openWebSocket(self.token, peer.username);
   sleep(0.5);
 }
 
