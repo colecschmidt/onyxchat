@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/cole/secure-messenger-server/internal/store"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -58,17 +59,10 @@ func RegisterHandler(userStore userStorer, jwtMgr *JWTManager) http.HandlerFunc 
 			return
 		}
 
-		// ✅ Check invite code BEFORE doing any work
 		if req.InviteCode == "" {
 			http.Error(w, "invite code required", http.StatusForbidden)
 			return
 		}
-		if err := userStore.ConsumeInviteCode(req.InviteCode, req.Username); err != nil {
-			http.Error(w, "invalid or expired invite code", http.StatusForbidden)
-			return
-		}
-
-		log.Printf("[Register] attempting to create user: %s", req.Username)
 
 		hashedBytes, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 		if err != nil {
@@ -77,10 +71,19 @@ func RegisterHandler(userStore userStorer, jwtMgr *JWTManager) http.HandlerFunc 
 			return
 		}
 
-		user, err := userStore.CreateUser(req.Username, string(hashedBytes))
+		// Consume invite code and create user atomically — if user creation
+		// fails (e.g. duplicate username) the invite code is not burned.
+		user, err := userStore.RegisterWithInvite(req.InviteCode, req.Username, string(hashedBytes))
 		if err != nil {
-			log.Printf("[Register] could not create user: %v", err)
-			http.Error(w, "could not create user", http.StatusInternalServerError)
+			switch err {
+			case store.ErrInvalidInviteCode:
+				http.Error(w, "invalid or expired invite code", http.StatusForbidden)
+			case store.ErrUsernameTaken:
+				http.Error(w, "username already taken", http.StatusConflict)
+			default:
+				log.Printf("[Register] could not create user: %v", err)
+				http.Error(w, "could not create user", http.StatusInternalServerError)
+			}
 			return
 		}
 

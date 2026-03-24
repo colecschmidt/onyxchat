@@ -4,9 +4,14 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 )
 
-var ErrUserNotFound = errors.New("user not found")
+var (
+	ErrUserNotFound     = errors.New("user not found")
+	ErrInvalidInviteCode = errors.New("invalid or already used invite code")
+	ErrUsernameTaken    = errors.New("username already taken")
+)
 
 type User struct {
 	ID           int64
@@ -30,6 +35,64 @@ type UserStore struct {
 func NewUserStore(db *sql.DB) *UserStore {
 	return &UserStore{db: db}
 }
+
+// ─────────────────────────────────────────────────────────────
+// Registration
+// ─────────────────────────────────────────────────────────────
+
+// RegisterWithInvite atomically consumes an invite code and creates the user
+// in a single transaction. If user creation fails (e.g. duplicate username)
+// the invite code is rolled back and remains available.
+func (s *UserStore) RegisterWithInvite(code, username, passwordHash string) (*User, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback() // no-op if Commit() succeeds
+
+	// Consume the invite code inside the transaction.
+	res, err := tx.Exec(
+		`UPDATE invite_codes SET used_by = $1, used_at = NOW()
+         WHERE code = $2 AND used_by IS NULL
+         AND (expires_at IS NULL OR expires_at > NOW())`,
+		username, code,
+	)
+	if err != nil {
+		return nil, err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return nil, ErrInvalidInviteCode
+	}
+
+	// Create the user inside the same transaction.
+	var id int64
+	err = tx.QueryRow(
+		`INSERT INTO users (username, password_hash) VALUES ($1, $2) RETURNING id`,
+		username, passwordHash,
+	).Scan(&id)
+	if err != nil {
+		// Postgres unique violation code 23505
+		if strings.Contains(err.Error(), "23505") || strings.Contains(err.Error(), "unique") {
+			return nil, ErrUsernameTaken
+		}
+		return nil, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+
+	return &User{
+		ID:           id,
+		Username:     username,
+		PasswordHash: passwordHash,
+	}, nil
+}
+
+// ─────────────────────────────────────────────────────────────
+// Basic user operations
+// ─────────────────────────────────────────────────────────────
 
 func (s *UserStore) CreateUser(username string, passwordHash string) (*User, error) {
 	row := s.db.QueryRow(
@@ -84,7 +147,7 @@ func (s *UserStore) ListUsers() ([]*User, error) {
 	var users []*User
 	for rows.Next() {
 		var u User
-		if err := rows.Scan(&u.ID, &u.Username); err != nil { // ← only 2 fields
+		if err := rows.Scan(&u.ID, &u.Username); err != nil {
 			return nil, err
 		}
 		users = append(users, &u)
