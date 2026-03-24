@@ -8,12 +8,12 @@ import { AdminPanel } from './components/AdminPanel'
 export default function App() {
   const { isAuthenticated } = useAuth()
 
-  if (!isAuthenticated) return <AuthScreen />
-
-  // Admin route — /admin
   if (window.location.pathname === '/admin') {
+    if (!isAuthenticated) return <AuthScreen />
     return <AdminPanel />
   }
+
+  if (!isAuthenticated) return <AuthScreen />
 
   return (
     <div style={{ display: 'flex', height: '100vh', width: '100%', overflow: 'hidden' }}>
