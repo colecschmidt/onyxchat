@@ -9,6 +9,7 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
 
@@ -23,6 +24,8 @@ jobs:
         working-directory: web/onyxchat-web
 
       - name: Build
+        env:
+          VITE_API_URL: https://api.onyxchat.dev
         run: npm run build
         working-directory: web/onyxchat-web
 
