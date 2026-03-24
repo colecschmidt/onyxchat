@@ -1,4 +1,8 @@
-const BASE_URL = import.meta.env.VITE_API_URL ?? window.location.origin
+const BASE_URL = import.meta.env.VITE_API_URL
+
+if (!BASE_URL) {
+  throw new Error('VITE_API_URL is not set')
+}
 
 let token: string | null = sessionStorage.getItem('token')
 
@@ -16,9 +20,10 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   }
+
   if (token) headers['Authorization'] = `Bearer ${token}`
 
-  const res = await fetch(BASE_URL + path, {
+  const res = await fetch(`${BASE_URL}${path}`, {
     method,
     headers,
     body: body ? JSON.stringify(body) : undefined,

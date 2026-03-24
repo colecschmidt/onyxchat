@@ -3,9 +3,9 @@ import { api } from '../api/client'
 import type { WSChatMessage, WSTyping, WSPresence } from '../types'
 
 type WSHandlers = {
-  onMessage:  (msg: WSChatMessage) => void
-  onTyping:   (msg: WSTyping)      => void
-  onPresence: (msg: WSPresence)    => void
+  onMessage: (msg: WSChatMessage) => void
+  onTyping: (msg: WSTyping) => void
+  onPresence: (msg: WSPresence) => void
 }
 
 async function fetchWSTicket(): Promise<string> {
@@ -14,44 +14,75 @@ async function fetchWSTicket(): Promise<string> {
 }
 
 export function useWebSocket(handlers: WSHandlers) {
-  const ws           = useRef<WebSocket | null>(null)
-  const reconnTimer  = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const handlersRef  = useRef(handlers)
+  const ws = useRef<WebSocket | null>(null)
+  const reconnTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const handlersRef = useRef(handlers)
+  const shouldReconnect = useRef(true)
 
-  useEffect(() => { handlersRef.current = handlers }, [handlers])
+  useEffect(() => {
+    handlersRef.current = handlers
+  }, [handlers])
 
   const connect = useCallback(async () => {
-    if (ws.current)      ws.current.close()
-    if (reconnTimer.current) clearTimeout(reconnTimer.current)
+    if (reconnTimer.current) {
+      clearTimeout(reconnTimer.current)
+      reconnTimer.current = null
+    }
+
+    if (ws.current) {
+      ws.current.close()
+      ws.current = null
+    }
 
     let ticket: string
     try {
       ticket = await fetchWSTicket()
     } catch {
-      // Not authenticated yet — retry after delay
-      reconnTimer.current = setTimeout(connect, 3000)
+      if (shouldReconnect.current) {
+        reconnTimer.current = setTimeout(connect, 3000)
+      }
       return
     }
 
-    const base   = (import.meta.env.VITE_API_URL ?? window.location.origin)
-      .replace(/^https/, 'wss')
-      .replace(/^http/,  'ws')
-    const socket = new WebSocket(`${base}/api/v1/ws?ticket=${encodeURIComponent(ticket)}`)
-    ws.current   = socket
+    const apiUrl = import.meta.env.VITE_API_URL
+    if (!apiUrl) {
+      console.error('VITE_API_URL is not set')
+      return
+    }
+
+    const wsBase = apiUrl
+      .replace(/^https:/, 'wss:')
+      .replace(/^http:/, 'ws:')
+
+    const socket = new WebSocket(
+      `${wsBase}/api/v1/ws?ticket=${encodeURIComponent(ticket)}`
+    )
+    ws.current = socket
 
     socket.addEventListener('message', (e) => {
       try {
         const msg = JSON.parse(e.data)
         switch (msg.type) {
-          case 'message':  handlersRef.current.onMessage(msg);  break
-          case 'typing':   handlersRef.current.onTyping(msg);   break
-          case 'presence': handlersRef.current.onPresence(msg); break
+          case 'message':
+            handlersRef.current.onMessage(msg)
+            break
+          case 'typing':
+            handlersRef.current.onTyping(msg)
+            break
+          case 'presence':
+            handlersRef.current.onPresence(msg)
+            break
         }
-      } catch { /* ignore malformed */ }
+      } catch {
+        // ignore malformed message
+      }
     })
 
     socket.addEventListener('close', () => {
-      reconnTimer.current = setTimeout(connect, 3000)
+      ws.current = null
+      if (shouldReconnect.current) {
+        reconnTimer.current = setTimeout(connect, 3000)
+      }
     })
 
     socket.addEventListener('error', () => {
@@ -60,10 +91,21 @@ export function useWebSocket(handlers: WSHandlers) {
   }, [])
 
   useEffect(() => {
+    shouldReconnect.current = true
     connect()
+
     return () => {
-      if (reconnTimer.current) clearTimeout(reconnTimer.current)
-      ws.current?.close()
+      shouldReconnect.current = false
+
+      if (reconnTimer.current) {
+        clearTimeout(reconnTimer.current)
+        reconnTimer.current = null
+      }
+
+      if (ws.current) {
+        ws.current.close()
+        ws.current = null
+      }
     }
   }, [connect])
 
