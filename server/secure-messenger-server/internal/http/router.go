@@ -98,9 +98,6 @@ func NewRouter(
 		MaxBodyBytes(1<<20)(http.HandlerFunc(SendMessageHandler(userStore, msgStore, hub, publisher))),
 	).Methods(http.MethodPost, http.MethodOptions)
 
-	protected.HandleFunc("/messages", ListMessagesHandler(userStore, msgStore)).Methods(http.MethodGet, http.MethodOptions)
-
-	protected.HandleFunc("/admin/invites", AdminListInvitesHandler(userStore)).Methods(http.MethodGet)
 	protected.HandleFunc("/admin/invites", AdminCreateInviteHandler(userStore)).Methods(http.MethodPost)
 	protected.HandleFunc("/admin/invites/{code}/reset", AdminResetInviteHandler(userStore)).Methods(http.MethodPost)
 
