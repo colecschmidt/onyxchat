@@ -9,6 +9,7 @@ import (
 // userStorer is the subset of *store.UserStore used by HTTP handlers.
 // Defining it here lets tests inject a fake without touching the store package.
 type userStorer interface {
+	RegisterWithInvite(code, username, passwordHash string) (*store.User, error)
 	CreateUser(username, passwordHash string) (*store.User, error)
 	GetUserByUsername(username string) (*store.User, error)
 	GetByUsername(username string) (*store.User, error)
