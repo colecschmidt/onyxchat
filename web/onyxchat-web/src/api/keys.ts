@@ -1,32 +1,27 @@
-// api/keys.ts — new file
-// Talks to the two new backend endpoints: PUT /api/v1/keys, GET /api/v1/keys/:username
-
 import { api, getToken } from './client'
 import type { GetKeyResponse } from '../types'
 
-/**
- * Upload your own ECDH public key to the server.
- * Call once after login/register.
- */
-export async function uploadPublicKey(publicKey: string): Promise<void> {
-  await fetch(
-    (import.meta.env.VITE_API_URL ?? window.location.origin) + '/api/v1/keys',
-    {
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        // client.ts stores the token in sessionStorage under 'token'
-        Authorization: `Bearer ${getToken() ?? ''}`,
-      },
-      body: JSON.stringify({ publicKey }),
-    },
-  )
+const BASE_URL = import.meta.env.VITE_API_URL
+
+if (!BASE_URL) {
+  throw new Error('VITE_API_URL is not set')
 }
 
-/**
- * Fetch any user's ECDH public key.
- * Returns null if the user hasn't uploaded a key yet (no E2E possible).
- */
+export async function uploadPublicKey(publicKey: string): Promise<void> {
+  const res = await fetch(`${BASE_URL}/api/v1/keys`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${getToken() ?? ''}`,
+    },
+    body: JSON.stringify({ publicKey }),
+  })
+
+  if (!res.ok) {
+    throw new Error(await res.text())
+  }
+}
+
 export async function fetchPublicKey(username: string): Promise<string | null> {
   try {
     const data = await api.get<GetKeyResponse>(`/api/v1/keys/${encodeURIComponent(username)}`)
