@@ -22,6 +22,7 @@ type userStorer interface {
 	AdminListInvites() ([]store.InviteCodeFull, error)
 	AdminCreateInvite(code, createdBy string, expiresAt *time.Time) (*store.InviteCodeFull, error)
 	AdminResetInvite(code string) error
+	UpdatePassword(userID int64, newHash string) error
 }
 
 // messageStorer is the subset of *store.MessageStore used by HTTP handlers.
