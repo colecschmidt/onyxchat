@@ -224,3 +224,12 @@ func (s *UserStore) ConsumeInviteCode(code string, username string) error {
 	}
 	return nil
 }
+
+// UpdatePassword sets a new bcrypt password hash for the given user.
+func (s *UserStore) UpdatePassword(userID int64, newHash string) error {
+	_, err := s.db.Exec(
+		`UPDATE users SET password_hash = $1 WHERE id = $2`,
+		newHash, userID,
+	)
+	return err
+}

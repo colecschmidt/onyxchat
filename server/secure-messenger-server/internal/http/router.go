@@ -88,6 +88,10 @@ func NewRouter(
 
 	protected.HandleFunc("/users", ListUsersHandler(userStore)).Methods(http.MethodGet, http.MethodOptions)
 
+	protected.Handle("/users/me/password",
+		MaxBodyBytes(1<<20)(http.HandlerFunc(ChangePasswordHandler(userStore))),
+	).Methods(http.MethodPatch, http.MethodOptions)
+
 	protected.Handle("/messages",
 		MaxBodyBytes(1<<20)(http.HandlerFunc(SendMessageHandler(userStore, msgStore, hub, publisher))),
 	).Methods(http.MethodPost, http.MethodOptions)
