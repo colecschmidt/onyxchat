@@ -1,7 +1,7 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState } from 'react'
 import { useChat } from '../context/ChatContext'
 import { useAuth } from '../context/AuthContext'
-import { changePassword } from '../api/auth'
+import { SettingsPanel } from './SettingsPanel'
 
 const initials = (name: string) => name.slice(0, 2).toUpperCase()
 
@@ -106,134 +106,8 @@ export function Sidebar() {
         </div>
       </div>
 
-      {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
+      {showSettings && <SettingsPanel onClose={() => setShowSettings(false)} />}
     </>
-  )
-}
-
-function SettingsModal({ onClose }: { onClose: () => void }) {
-  const [current, setCurrent] = useState('')
-  const [next, setNext] = useState('')
-  const [confirm, setConfirm] = useState('')
-  const [error, setError] = useState('')
-  const [success, setSuccess] = useState(false)
-  const [loading, setLoading] = useState(false)
-
-  const handleSubmit = useCallback(async () => {
-    setError('')
-    setSuccess(false)
-    if (!current || !next || !confirm) return setError('All fields required.')
-    if (next.length < 8) return setError('New password must be at least 8 characters.')
-    if (next !== confirm) return setError('New passwords do not match.')
-    setLoading(true)
-    try {
-      await changePassword(current, next)
-      setSuccess(true)
-      setCurrent(''); setNext(''); setConfirm('')
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Something went wrong.')
-    } finally {
-      setLoading(false)
-    }
-  }, [current, next, confirm])
-
-  // Close on backdrop click
-  const handleBackdrop = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (e.target === e.currentTarget) onClose()
-  }
-
-  return (
-    <div
-      onClick={handleBackdrop}
-      style={{
-        position: 'fixed', inset: 0, zIndex: 50,
-        background: 'rgba(0,0,0,0.6)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        padding: '20px',
-      }}
-    >
-      <div style={{
-        width: '100%', maxWidth: '360px',
-        background: 'var(--bg-2)',
-        border: '1px solid var(--border-2)',
-        borderRadius: '16px',
-        padding: '28px 28px 24px',
-      }}>
-        {/* Header */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
-          <div style={{ fontSize: '15px', fontWeight: 600, color: 'var(--text)' }}>Change Password</div>
-          <button onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--text-mute)', cursor: 'pointer', padding: '4px', borderRadius: '6px', display: 'flex' }}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-            </svg>
-          </button>
-        </div>
-
-        {/* Success */}
-        {success && (
-          <div style={{
-            fontSize: '12px', color: 'var(--green)',
-            background: 'rgba(34,197,94,0.08)',
-            border: '1px solid rgba(34,197,94,0.2)',
-            borderRadius: '8px', padding: '8px 12px', marginBottom: '12px',
-          }}>
-            Password changed successfully.
-          </div>
-        )}
-
-        {/* Error */}
-        {error && (
-          <div style={{
-            fontSize: '12px', color: 'var(--red)',
-            background: 'rgba(239,68,68,0.08)',
-            border: '1px solid rgba(239,68,68,0.2)',
-            borderRadius: '8px', padding: '8px 12px', marginBottom: '12px',
-          }}>
-            {error}
-          </div>
-        )}
-
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-          {[
-            { label: 'Current Password', value: current, setter: setCurrent, auto: 'current-password' },
-            { label: 'New Password', value: next, setter: setNext, auto: 'new-password' },
-            { label: 'Confirm New Password', value: confirm, setter: setConfirm, auto: 'new-password' },
-          ].map(({ label, value, setter, auto }) => (
-            <div key={label}>
-              <div style={{ fontSize: '12px', fontWeight: 500, color: 'var(--text-dim)', marginBottom: '4px' }}>{label}</div>
-              <input
-                type="password"
-                value={value}
-                onChange={e => setter(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && handleSubmit()}
-                autoComplete={auto}
-                placeholder="••••••••"
-                style={{
-                  width: '100%', background: 'var(--bg-3)',
-                  border: '1px solid var(--border)', borderRadius: '8px',
-                  color: 'var(--text)', fontSize: '14px', padding: '10px 14px',
-                  outline: 'none', boxSizing: 'border-box',
-                }}
-              />
-            </div>
-          ))}
-
-          <button
-            onClick={handleSubmit}
-            disabled={loading}
-            style={{
-              width: '100%', padding: '11px',
-              background: 'var(--blue)', border: 'none',
-              borderRadius: '8px', color: 'white',
-              fontSize: '14px', fontWeight: 600, cursor: 'pointer',
-              marginTop: '4px', opacity: loading ? 0.5 : 1,
-            }}
-          >
-            {loading ? 'Updating…' : 'Update Password'}
-          </button>
-        </div>
-      </div>
-    </div>
   )
 }
 
