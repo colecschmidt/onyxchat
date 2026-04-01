@@ -3,6 +3,11 @@ variable "app_name" {
   default = "onyxchat"
 }
 
+variable "aws_account_id" {
+  type        = string
+  description = "AWS account ID. Used for constructing ARNs."
+}
+
 variable "image_uri" {
   type = string
   validation {

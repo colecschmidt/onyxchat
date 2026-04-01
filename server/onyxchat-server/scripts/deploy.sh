@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REGION="us-east-1"
-ACCOUNT_ID="675950137665"
-ECR_REPO="secure-messenger-backend"
+REGION="${AWS_REGION:-us-east-1}"
+ACCOUNT_ID="${AWS_ACCOUNT_ID:?AWS_ACCOUNT_ID must be set}"
+ECR_REPO="onyxchat"
 ECR="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com"
 IMAGE_TAG="${1:-$(git rev-parse --short HEAD)}"
 IMAGE_URI="${ECR}/${ECR_REPO}:${IMAGE_TAG}"
