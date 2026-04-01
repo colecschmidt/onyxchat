@@ -62,10 +62,10 @@ func DeleteAccountHandler(userStore userStorer, log *zap.Logger) http.HandlerFun
 		}
 
 		log.Info("[DeleteAccount] GDPR deletion complete",
-				zap.Int64("user_id", cu.ID),
-				zap.Int("messages_purged", record.MessagesPurged),
-				zap.Int("invites_expired", record.InvitesExpired),
-			)
+			zap.Int64("user_id", cu.ID),
+			zap.Int("messages_purged", record.MessagesPurged),
+			zap.Int("invites_expired", record.InvitesExpired),
+		)
 
 		w.WriteHeader(http.StatusNoContent) // 204 — success, no body
 	}
