@@ -118,7 +118,7 @@ func main() {
 				return
 			default:
 			}
-			if err := serverhttp.StartMessageSubscriber(subscriberCtx, rdb, messageStore, hub); err != nil {
+			if err := serverhttp.StartMessageSubscriber(subscriberCtx, rdb, messageStore, hub, logger); err != nil {
 				logger.Error("message subscriber exited, restarting in 2s", zap.Error(err))
 			}
 			select {
@@ -128,6 +128,16 @@ func main() {
 			}
 		}
 	}()
+
+	// Admin username
+	adminUsername := os.Getenv("SM_ADMIN_USERNAME")
+	if env == "prod" && adminUsername == "" {
+		logger.Fatal("SM_ADMIN_USERNAME is required in prod")
+	}
+	if adminUsername == "" {
+		adminUsername = "ashenspellbook"
+		logger.Warn("SM_ADMIN_USERNAME not set; using dev default", zap.String("username", adminUsername))
+	}
 
 	// Router (NOTE: now includes jwtMgr)
 	allowedOrigins := parseAllowedOrigins(os.Getenv("SM_ALLOWED_ORIGINS"))
@@ -146,6 +156,7 @@ func main() {
 		allowedOrigins,
 		env,
 		rdb,
+		adminUsername,
 	)
 
 	// Server

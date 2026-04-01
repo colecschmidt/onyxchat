@@ -3,14 +3,15 @@ package http
 // internal/http/admin_handlers.go
 
 import (
+	"crypto/rand"
 	"encoding/json"
-	"log"
-	"math/rand"
+	"math/big"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/gorilla/mux"
+	"go.uber.org/zap"
 )
 
 // ─────────────────────────────────────────────────────────────
@@ -38,12 +39,12 @@ type createInviteRequest struct {
 // GET /api/v1/admin/invites — list all codes
 // ─────────────────────────────────────────────────────────────
 
-func AdminListInvitesHandler(userStore userStorer) http.HandlerFunc {
+func AdminListInvitesHandler(userStore userStorer, log *zap.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		codes, err := userStore.AdminListInvites()
 		if err != nil {
-			log.Printf("[AdminListInvites] %v", err)
-			http.Error(w, "failed to list invite codes", http.StatusInternalServerError)
+			log.Error("[AdminListInvites] failed to list invites", zap.Error(err))
+			writeJSONError(w, http.StatusInternalServerError, "failed to list invite codes")
 			return
 		}
 
@@ -69,7 +70,7 @@ func AdminListInvitesHandler(userStore userStorer) http.HandlerFunc {
 // POST /api/v1/admin/invites — create a new code
 // ─────────────────────────────────────────────────────────────
 
-func AdminCreateInviteHandler(userStore userStorer) http.HandlerFunc {
+func AdminCreateInviteHandler(userStore userStorer, log *zap.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		caller := CurrentUser(r)
 
@@ -96,8 +97,8 @@ func AdminCreateInviteHandler(userStore userStorer) http.HandlerFunc {
 				http.Error(w, "invite code already exists", http.StatusConflict)
 				return
 			}
-			log.Printf("[AdminCreateInvite] %v", err)
-			http.Error(w, "failed to create invite code", http.StatusInternalServerError)
+			log.Error("[AdminCreateInvite] failed to create invite", zap.Error(err))
+			writeJSONError(w, http.StatusInternalServerError, "failed to create invite code")
 			return
 		}
 
@@ -119,7 +120,7 @@ func AdminCreateInviteHandler(userStore userStorer) http.HandlerFunc {
 // POST /api/v1/admin/invites/{code}/reset — un-burn a code
 // ─────────────────────────────────────────────────────────────
 
-func AdminResetInviteHandler(userStore userStorer) http.HandlerFunc {
+func AdminResetInviteHandler(userStore userStorer, log *zap.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		code := mux.Vars(r)["code"]
 		if code == "" {
@@ -132,8 +133,8 @@ func AdminResetInviteHandler(userStore userStorer) http.HandlerFunc {
 				http.Error(w, "invite code not found", http.StatusNotFound)
 				return
 			}
-			log.Printf("[AdminResetInvite] %v", err)
-			http.Error(w, "failed to reset invite code", http.StatusInternalServerError)
+			log.Error("[AdminResetInvite] failed to reset invite", zap.Error(err))
+			writeJSONError(w, http.StatusInternalServerError, "failed to reset invite code")
 			return
 		}
 
@@ -151,8 +152,10 @@ const inviteCharset = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 
 func randomCode(prefix string) string {
 	b := make([]byte, 6)
+	n := big.NewInt(int64(len(inviteCharset)))
 	for i := range b {
-		b[i] = inviteCharset[rand.Intn(len(inviteCharset))]
+		idx, _ := rand.Int(rand.Reader, n)
+		b[i] = inviteCharset[idx.Int64()]
 	}
 	// e.g. ASHENSPELLBOOK-ABC-123
 	return prefix + "-" + string(b[:3]) + "-" + string(b[3:])

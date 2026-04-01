@@ -3,13 +3,13 @@ package http
 import (
 	"encoding/json"
 	"errors"
-	"golang.org/x/crypto/bcrypt"
-	"log"
 	"net/http"
 	"strings"
 
 	"github.com/cole/onyxchat-server/internal/store"
 	"github.com/gorilla/mux"
+	"go.uber.org/zap"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // ─────────────────────────────────────────────────────────────
@@ -18,7 +18,7 @@ import (
 
 // DeleteAccountHandler performs a GDPR-compliant account deletion.
 // Requires the user to confirm their password to prevent accidental deletion.
-func DeleteAccountHandler(userStore userStorer) http.HandlerFunc {
+func DeleteAccountHandler(userStore userStorer, log *zap.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		cu := CurrentUser(r)
 		if cu == nil {
@@ -55,14 +55,17 @@ func DeleteAccountHandler(userStore userStorer) http.HandlerFunc {
 			case errors.Is(err, store.ErrAlreadyDeleted):
 				http.Error(w, "account already deleted", http.StatusGone)
 			default:
-				log.Printf("[DeleteAccount] GDPR deletion failed for user %d: %v", cu.ID, err)
-				http.Error(w, "failed to delete account", http.StatusInternalServerError)
+				log.Error("[DeleteAccount] GDPR deletion failed", zap.Int64("user_id", cu.ID), zap.Error(err))
+				writeJSONError(w, http.StatusInternalServerError, "failed to delete account")
 			}
 			return
 		}
 
-		log.Printf("[DeleteAccount] GDPR deletion complete: user=%d messages_purged=%d invites_expired=%d",
-			cu.ID, record.MessagesPurged, record.InvitesExpired)
+		log.Info("[DeleteAccount] GDPR deletion complete",
+				zap.Int64("user_id", cu.ID),
+				zap.Int("messages_purged", record.MessagesPurged),
+				zap.Int("invites_expired", record.InvitesExpired),
+			)
 
 		w.WriteHeader(http.StatusNoContent) // 204 — success, no body
 	}
@@ -72,7 +75,7 @@ func DeleteAccountHandler(userStore userStorer) http.HandlerFunc {
 // GET /api/v1/contacts
 // ─────────────────────────────────────────────────────────────
 
-func ListContactsHandler(userStore userStorer) http.HandlerFunc {
+func ListContactsHandler(userStore userStorer, log *zap.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		cu := CurrentUser(r)
 		if cu == nil {
@@ -82,8 +85,8 @@ func ListContactsHandler(userStore userStorer) http.HandlerFunc {
 
 		contacts, err := userStore.ListContacts(cu.ID)
 		if err != nil {
-			log.Printf("[ListContacts] error for user %d: %v", cu.ID, err)
-			http.Error(w, "failed to list contacts", http.StatusInternalServerError)
+			log.Error("[ListContacts] error", zap.Int64("user_id", cu.ID), zap.Error(err))
+			writeJSONError(w, http.StatusInternalServerError, "failed to list contacts")
 			return
 		}
 
@@ -112,7 +115,7 @@ func ListContactsHandler(userStore userStorer) http.HandlerFunc {
 // Body: { "username": "alice" }
 // ─────────────────────────────────────────────────────────────
 
-func AddContactHandler(userStore userStorer) http.HandlerFunc {
+func AddContactHandler(userStore userStorer, log *zap.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		cu := CurrentUser(r)
 		if cu == nil {
@@ -144,8 +147,8 @@ func AddContactHandler(userStore userStorer) http.HandlerFunc {
 			case errors.Is(err, store.ErrContactExists):
 				http.Error(w, "already in contacts", http.StatusConflict)
 			default:
-				log.Printf("[AddContact] error: %v", err)
-				http.Error(w, "failed to add contact", http.StatusInternalServerError)
+				log.Error("[AddContact] error", zap.Error(err))
+				writeJSONError(w, http.StatusInternalServerError, "failed to add contact")
 			}
 			return
 		}
@@ -158,7 +161,7 @@ func AddContactHandler(userStore userStorer) http.HandlerFunc {
 // DELETE /api/v1/contacts/{username}
 // ─────────────────────────────────────────────────────────────
 
-func RemoveContactHandler(userStore userStorer) http.HandlerFunc {
+func RemoveContactHandler(userStore userStorer, log *zap.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		cu := CurrentUser(r)
 		if cu == nil {
@@ -177,8 +180,8 @@ func RemoveContactHandler(userStore userStorer) http.HandlerFunc {
 				http.Error(w, "contact not found", http.StatusNotFound)
 				return
 			}
-			log.Printf("[RemoveContact] error: %v", err)
-			http.Error(w, "failed to remove contact", http.StatusInternalServerError)
+			log.Error("[RemoveContact] error", zap.Error(err))
+			writeJSONError(w, http.StatusInternalServerError, "failed to remove contact")
 			return
 		}
 

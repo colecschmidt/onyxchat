@@ -16,7 +16,14 @@ export function getToken() {
   return token
 }
 
-async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+// Lazily imported to avoid a circular dep (auth.ts → client.ts → auth.ts).
+// Only resolved at call time, after both modules are fully loaded.
+async function tryRefresh(): Promise<string | null> {
+  const { refresh } = await import('./auth')
+  return refresh()
+}
+
+async function request<T>(method: string, path: string, body?: unknown, isRetry = false): Promise<T> {
   if (!BASE_URL) throw new Error('VITE_API_URL is not configured')
 
   const headers: Record<string, string> = {
@@ -31,9 +38,13 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     body: body ? JSON.stringify(body) : undefined,
   })
 
-  // Auto-clear stale token on 401 so the user is returned to the login screen
-  // rather than being silently stuck with an expired/invalid session.
-  if (res.status === 401) {
+  if (res.status === 401 && !isRetry && path !== '/api/v1/refresh' && path !== '/api/v1/login') {
+    const newToken = await tryRefresh()
+    if (newToken) {
+      // Retry once with the new access token
+      return request<T>(method, path, body, true)
+    }
+    // Refresh failed — clear session and surface the 401
     setToken(null)
     sessionStorage.removeItem('user')
   }

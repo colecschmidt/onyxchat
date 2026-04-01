@@ -11,9 +11,18 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/cole/onyxchat-server/internal/store"
+	"github.com/redis/go-redis/v9"
+	"go.uber.org/zap"
 	"golang.org/x/time/rate"
 )
+
+func newTestRDB(t *testing.T) *redis.Client {
+	t.Helper()
+	mr := miniredis.RunT(t)
+	return redis.NewClient(&redis.Options{Addr: mr.Addr()})
+}
 
 // ─────────────────────────────────────────────────────────────
 // Fake stores — no DB required
@@ -235,7 +244,7 @@ func registerUser(t *testing.T, us *fakeUserStore, jwtMgr *JWTManager, username,
 		"invite_code": inviteCode,
 	})
 	rr := httptest.NewRecorder()
-	RegisterHandler(us, jwtMgr)(rr, httptest.NewRequest(http.MethodPost, "/register", body))
+	RegisterHandler(us, jwtMgr, newTestRDB(t), zap.NewNop())(rr, httptest.NewRequest(http.MethodPost, "/register", body))
 	if rr.Code != http.StatusOK {
 		t.Fatalf("registerUser setup failed: %d %s", rr.Code, rr.Body.String())
 	}
@@ -264,7 +273,7 @@ func (f *fakeUserStore) UpdatePassword(userID int64, newHash string) error {
 func TestRegisterHandler_Success(t *testing.T) {
 	us := newFakeUserStore()
 	us.addInvite("VALID-CODE")
-	h := RegisterHandler(us, newTestJWT())
+	h := RegisterHandler(us, newTestJWT(), newTestRDB(t), zap.NewNop())
 
 	body := mustMarshal(t, map[string]string{
 		"username": "alice", "password": "secret123", "invite_code": "VALID-CODE",
@@ -288,7 +297,7 @@ func TestRegisterHandler_Success(t *testing.T) {
 }
 
 func TestRegisterHandler_MissingInviteCode(t *testing.T) {
-	h := RegisterHandler(newFakeUserStore(), newTestJWT())
+	h := RegisterHandler(newFakeUserStore(), newTestJWT(), newTestRDB(t), zap.NewNop())
 	body := mustMarshal(t, map[string]string{"username": "alice", "password": "secret123"})
 	rr := httptest.NewRecorder()
 	h(rr, httptest.NewRequest(http.MethodPost, "/register", body))
@@ -298,7 +307,7 @@ func TestRegisterHandler_MissingInviteCode(t *testing.T) {
 }
 
 func TestRegisterHandler_InvalidInviteCode(t *testing.T) {
-	h := RegisterHandler(newFakeUserStore(), newTestJWT())
+	h := RegisterHandler(newFakeUserStore(), newTestJWT(), newTestRDB(t), zap.NewNop())
 	body := mustMarshal(t, map[string]string{
 		"username": "alice", "password": "secret123", "invite_code": "BOGUS",
 	})
@@ -312,7 +321,7 @@ func TestRegisterHandler_InvalidInviteCode(t *testing.T) {
 func TestRegisterHandler_InviteCodeSingleUse(t *testing.T) {
 	us := newFakeUserStore()
 	us.addInvite("ONCE")
-	h := RegisterHandler(us, newTestJWT())
+	h := RegisterHandler(us, newTestJWT(), newTestRDB(t), zap.NewNop())
 
 	wantCodes := []int{http.StatusOK, http.StatusForbidden}
 	for i, want := range wantCodes {
@@ -332,7 +341,7 @@ func TestRegisterHandler_InviteCodeSingleUse(t *testing.T) {
 func TestRegisterHandler_MissingUsername(t *testing.T) {
 	us := newFakeUserStore()
 	us.addInvite("CODE")
-	h := RegisterHandler(us, newTestJWT())
+	h := RegisterHandler(us, newTestJWT(), newTestRDB(t), zap.NewNop())
 	body := mustMarshal(t, map[string]string{"password": "secret123", "invite_code": "CODE"})
 	rr := httptest.NewRecorder()
 	h(rr, httptest.NewRequest(http.MethodPost, "/register", body))
@@ -344,7 +353,7 @@ func TestRegisterHandler_MissingUsername(t *testing.T) {
 func TestRegisterHandler_MissingPassword(t *testing.T) {
 	us := newFakeUserStore()
 	us.addInvite("CODE")
-	h := RegisterHandler(us, newTestJWT())
+	h := RegisterHandler(us, newTestJWT(), newTestRDB(t), zap.NewNop())
 	body := mustMarshal(t, map[string]string{"username": "alice", "invite_code": "CODE"})
 	rr := httptest.NewRecorder()
 	h(rr, httptest.NewRequest(http.MethodPost, "/register", body))
@@ -354,7 +363,7 @@ func TestRegisterHandler_MissingPassword(t *testing.T) {
 }
 
 func TestRegisterHandler_InvalidJSON(t *testing.T) {
-	h := RegisterHandler(newFakeUserStore(), newTestJWT())
+	h := RegisterHandler(newFakeUserStore(), newTestJWT(), newTestRDB(t), zap.NewNop())
 	rr := httptest.NewRecorder()
 	h(rr, httptest.NewRequest(http.MethodPost, "/register", bytes.NewBufferString("not-json")))
 	if rr.Code != http.StatusBadRequest {
@@ -371,7 +380,7 @@ func TestLoginHandler_Success(t *testing.T) {
 	jwtMgr := newTestJWT()
 	registerUser(t, us, jwtMgr, "alice", "correct-password", "CODE1")
 
-	h := LoginHandler(us, jwtMgr, openLimiter())
+	h := LoginHandler(us, jwtMgr, openLimiter(), newTestRDB(t), zap.NewNop())
 	body := mustMarshal(t, map[string]string{"username": "alice", "password": "correct-password"})
 	rr := httptest.NewRecorder()
 	h(rr, httptest.NewRequest(http.MethodPost, "/login", body))
@@ -396,7 +405,7 @@ func TestLoginHandler_WrongPassword(t *testing.T) {
 	jwtMgr := newTestJWT()
 	registerUser(t, us, jwtMgr, "alice", "correct-password", "CODE2")
 
-	h := LoginHandler(us, jwtMgr, openLimiter())
+	h := LoginHandler(us, jwtMgr, openLimiter(), newTestRDB(t), zap.NewNop())
 	body := mustMarshal(t, map[string]string{"username": "alice", "password": "wrong"})
 	rr := httptest.NewRecorder()
 	h(rr, httptest.NewRequest(http.MethodPost, "/login", body))
@@ -406,7 +415,7 @@ func TestLoginHandler_WrongPassword(t *testing.T) {
 }
 
 func TestLoginHandler_UnknownUser(t *testing.T) {
-	h := LoginHandler(newFakeUserStore(), newTestJWT(), openLimiter())
+	h := LoginHandler(newFakeUserStore(), newTestJWT(), openLimiter(), newTestRDB(t), zap.NewNop())
 	body := mustMarshal(t, map[string]string{"username": "nobody", "password": "pass"})
 	rr := httptest.NewRecorder()
 	h(rr, httptest.NewRequest(http.MethodPost, "/login", body))
@@ -416,7 +425,7 @@ func TestLoginHandler_UnknownUser(t *testing.T) {
 }
 
 func TestLoginHandler_MissingFields(t *testing.T) {
-	h := LoginHandler(newFakeUserStore(), newTestJWT(), openLimiter())
+	h := LoginHandler(newFakeUserStore(), newTestJWT(), openLimiter(), newTestRDB(t), zap.NewNop())
 	body := mustMarshal(t, map[string]string{"username": "alice"}) // no password
 	rr := httptest.NewRecorder()
 	h(rr, httptest.NewRequest(http.MethodPost, "/login", body))
@@ -426,7 +435,7 @@ func TestLoginHandler_MissingFields(t *testing.T) {
 }
 
 func TestLoginHandler_InvalidJSON(t *testing.T) {
-	h := LoginHandler(newFakeUserStore(), newTestJWT(), openLimiter())
+	h := LoginHandler(newFakeUserStore(), newTestJWT(), openLimiter(), newTestRDB(t), zap.NewNop())
 	rr := httptest.NewRecorder()
 	h(rr, httptest.NewRequest(http.MethodPost, "/login", bytes.NewBufferString("{bad")))
 	if rr.Code != http.StatusBadRequest {
@@ -443,7 +452,7 @@ func TestListUsersHandler_ReturnsAllUsers(t *testing.T) {
 	us.users["alice"] = &store.User{ID: 1, Username: "alice"}
 	us.users["bob"] = &store.User{ID: 2, Username: "bob"}
 
-	h := injectUser(http.HandlerFunc(ListUsersHandler(us)), &AuthUser{ID: 1, Username: "alice"})
+	h := injectUser(http.HandlerFunc(ListUsersHandler(us, zap.NewNop())), &AuthUser{ID: 1, Username: "alice"})
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/v1/users", nil))
 
@@ -460,7 +469,7 @@ func TestListUsersHandler_ReturnsAllUsers(t *testing.T) {
 }
 
 func TestListUsersHandler_EmptyStore(t *testing.T) {
-	h := injectUser(http.HandlerFunc(ListUsersHandler(newFakeUserStore())), &AuthUser{ID: 1, Username: "alice"})
+	h := injectUser(http.HandlerFunc(ListUsersHandler(newFakeUserStore(), zap.NewNop())), &AuthUser{ID: 1, Username: "alice"})
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/v1/users", nil))
 	if rr.Code != http.StatusOK {
@@ -488,7 +497,7 @@ func setupSend(t *testing.T) (*fakeUserStore, *fakeMessageStore, *Hub, *fakePubl
 }
 
 func sendHandler(us *fakeUserStore, ms *fakeMessageStore, hub *Hub, pub *fakePublisher, asUser *AuthUser) http.Handler {
-	return injectUser(http.HandlerFunc(SendMessageHandler(us, ms, hub, pub)), asUser)
+	return injectUser(http.HandlerFunc(SendMessageHandler(us, ms, hub, pub, zap.NewNop())), asUser)
 }
 
 func TestSendMessageHandler_Success(t *testing.T) {
@@ -543,7 +552,7 @@ func TestSendMessageHandler_UnknownRecipient(t *testing.T) {
 func TestSendMessageHandler_Unauthenticated(t *testing.T) {
 	us, ms, hub, pub := setupSend(t)
 	// No injectUser wrapper — no auth in context
-	h := http.HandlerFunc(SendMessageHandler(us, ms, hub, pub))
+	h := http.HandlerFunc(SendMessageHandler(us, ms, hub, pub, zap.NewNop()))
 
 	body := mustMarshal(t, map[string]string{
 		"recipientUsername": "bob", "body": "hello", "clientMessageId": "msg-003",
@@ -628,7 +637,7 @@ func TestListMessagesHandler_ReturnsPeerMessages(t *testing.T) {
 		{ID: 2, SenderID: 2, RecipientID: 1, Body: "hey alice"},
 	}
 
-	h := injectUser(http.HandlerFunc(ListMessagesHandler(us, ms)), &AuthUser{ID: 1, Username: "alice"})
+	h := injectUser(http.HandlerFunc(ListMessagesHandler(us, ms, zap.NewNop())), &AuthUser{ID: 1, Username: "alice"})
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/v1/messages?peer=bob", nil))
 
@@ -654,7 +663,7 @@ func TestListMessagesHandler_SinceIDFilters(t *testing.T) {
 		{ID: 2, SenderID: 1, RecipientID: 2, Body: "new"},
 	}
 
-	h := injectUser(http.HandlerFunc(ListMessagesHandler(us, ms)), &AuthUser{ID: 1, Username: "alice"})
+	h := injectUser(http.HandlerFunc(ListMessagesHandler(us, ms, zap.NewNop())), &AuthUser{ID: 1, Username: "alice"})
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/v1/messages?peer=bob&sinceId=1", nil))
 
@@ -673,7 +682,7 @@ func TestListMessagesHandler_SinceIDFilters(t *testing.T) {
 
 func TestListMessagesHandler_MissingPeer(t *testing.T) {
 	h := injectUser(
-		http.HandlerFunc(ListMessagesHandler(newFakeUserStore(), newFakeMessageStore())),
+		http.HandlerFunc(ListMessagesHandler(newFakeUserStore(), newFakeMessageStore(), zap.NewNop())),
 		&AuthUser{ID: 1, Username: "alice"},
 	)
 	rr := httptest.NewRecorder()
@@ -685,7 +694,7 @@ func TestListMessagesHandler_MissingPeer(t *testing.T) {
 
 func TestListMessagesHandler_UnknownPeer(t *testing.T) {
 	h := injectUser(
-		http.HandlerFunc(ListMessagesHandler(newFakeUserStore(), newFakeMessageStore())),
+		http.HandlerFunc(ListMessagesHandler(newFakeUserStore(), newFakeMessageStore(), zap.NewNop())),
 		&AuthUser{ID: 1, Username: "alice"},
 	)
 	rr := httptest.NewRecorder()
@@ -696,7 +705,7 @@ func TestListMessagesHandler_UnknownPeer(t *testing.T) {
 }
 
 func TestListMessagesHandler_Unauthenticated(t *testing.T) {
-	h := http.HandlerFunc(ListMessagesHandler(newFakeUserStore(), newFakeMessageStore()))
+	h := http.HandlerFunc(ListMessagesHandler(newFakeUserStore(), newFakeMessageStore(), zap.NewNop()))
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/v1/messages?peer=bob", nil))
 	if rr.Code != http.StatusUnauthorized {

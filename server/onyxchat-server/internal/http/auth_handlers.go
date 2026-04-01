@@ -2,11 +2,12 @@ package http
 
 import (
 	"encoding/json"
-	"log"
 	"net/http"
 	"strings"
 
 	"github.com/cole/onyxchat-server/internal/store"
+	"github.com/redis/go-redis/v9"
+	"go.uber.org/zap"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -15,14 +16,8 @@ import (
 // ─────────────────────────────────────────────────────────────
 
 func HealthHandler(w http.ResponseWriter, r *http.Request) {
-	log.Println("[Health] /health hit")
-
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(map[string]string{
-		"status": "ok",
-	}); err != nil {
-		log.Printf("[Health] failed to write response: %v", err)
-	}
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -36,38 +31,36 @@ type RegisterRequest struct {
 }
 
 type RegisterResponse struct {
-	ID       int64  `json:"id"`
-	Username string `json:"username"`
-	Token    string `json:"token"`
+	ID           int64  `json:"id"`
+	Username     string `json:"username"`
+	Token        string `json:"token"`
+	RefreshToken string `json:"refresh_token"`
 }
 
-func RegisterHandler(userStore userStorer, jwtMgr *JWTManager) http.HandlerFunc {
+func RegisterHandler(userStore userStorer, jwtMgr *JWTManager, rdb *redis.Client, log *zap.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		log.Println("[Register] incoming request")
-
 		var req RegisterRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			log.Printf("[Register] invalid JSON: %v", err)
-			http.Error(w, "invalid JSON", http.StatusBadRequest)
+			log.Warn("[Register] invalid JSON", zap.Error(err))
+			writeJSONError(w, http.StatusBadRequest, "invalid JSON")
 			return
 		}
 
 		req.Username = strings.TrimSpace(req.Username)
 		if req.Username == "" || req.Password == "" {
-			log.Println("[Register] missing username or password")
-			http.Error(w, "username and password required", http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "username and password required")
 			return
 		}
 
 		if req.InviteCode == "" {
-			http.Error(w, "invite code required", http.StatusForbidden)
+			writeJSONError(w, http.StatusForbidden, "invite code required")
 			return
 		}
 
 		hashedBytes, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 		if err != nil {
-			log.Printf("[Register] could not hash password: %v", err)
-			http.Error(w, "could not hash password", http.StatusInternalServerError)
+			log.Error("[Register] could not hash password", zap.Error(err))
+			writeJSONError(w, http.StatusInternalServerError, "could not hash password")
 			return
 		}
 
@@ -75,34 +68,40 @@ func RegisterHandler(userStore userStorer, jwtMgr *JWTManager) http.HandlerFunc 
 		// fails (e.g. duplicate username) the invite code is not burned.
 		user, err := userStore.RegisterWithInvite(req.InviteCode, req.Username, string(hashedBytes))
 		if err != nil {
-			log.Printf("[Register] could not create user: %v", err)
-
+			log.Warn("[Register] could not create user", zap.String("username", req.Username), zap.Error(err))
 			if strings.Contains(err.Error(), "invalid or already used invite code") {
-				http.Error(w, "invalid or already used invite code", http.StatusForbidden)
+				writeJSONError(w, http.StatusForbidden, "invalid or already used invite code")
 				return
 			}
-
-			http.Error(w, "failed to create user", http.StatusInternalServerError)
+			writeJSONError(w, http.StatusInternalServerError, "failed to create user")
 			return
 		}
 
 		token, err := jwtMgr.Generate(user)
 		if err != nil {
-			log.Printf("[Register] failed to generate JWT: %v", err)
-			http.Error(w, "failed to generate token", http.StatusInternalServerError)
+			log.Error("[Register] failed to generate JWT", zap.Error(err))
+			writeJSONError(w, http.StatusInternalServerError, "failed to generate token")
 			return
 		}
 
-		resp := RegisterResponse{
-			ID:       user.ID,
-			Username: user.Username,
-			Token:    token,
+		rt, err := newRefreshToken()
+		if err != nil {
+			log.Error("[Register] failed to generate refresh token", zap.Error(err))
+			writeJSONError(w, http.StatusInternalServerError, "failed to generate token")
+			return
+		}
+		if err := storeRefreshToken(r.Context(), rdb, rt, user.ID); err != nil {
+			log.Error("[Register] failed to store refresh token", zap.Error(err))
+			writeJSONError(w, http.StatusInternalServerError, "failed to generate token")
+			return
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(resp); err != nil {
-			log.Printf("[Register] failed to write response: %v", err)
-		}
+		writeJSON(w, http.StatusOK, RegisterResponse{
+			ID:           user.ID,
+			Username:     user.Username,
+			Token:        token,
+			RefreshToken: rt,
+		})
 	}
 }
 
@@ -116,61 +115,160 @@ type LoginRequest struct {
 }
 
 type LoginResponse struct {
-	ID       int64  `json:"id"`
-	Username string `json:"username"`
-	Token    string `json:"token"`
+	ID           int64  `json:"id"`
+	Username     string `json:"username"`
+	Token        string `json:"token"`
+	RefreshToken string `json:"refresh_token"`
 }
 
-func LoginHandler(userStore userStorer, jwtMgr *JWTManager, idLimiter *KeyedLimiter) http.HandlerFunc {
+func LoginHandler(userStore userStorer, jwtMgr *JWTManager, idLimiter *KeyedLimiter, rdb *redis.Client, log *zap.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req LoginRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "invalid JSON", http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "invalid JSON")
 			return
 		}
 
 		req.Username = strings.TrimSpace(req.Username)
 		if req.Username == "" || req.Password == "" {
-			http.Error(w, "username and password required", http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "username and password required")
 			return
 		}
 
-		// ✅ rate limit by identifier BEFORE lookup/hash work
+		// rate limit by identifier BEFORE lookup/hash work
 		if !idLimiter.Allow(strings.ToLower(req.Username)) {
-			http.Error(w, "too many requests", http.StatusTooManyRequests)
+			writeJSONError(w, http.StatusTooManyRequests, "too many requests")
 			return
 		}
 
 		user, err := userStore.GetUserByUsername(req.Username)
 		if err != nil {
 			if err == store.ErrUserNotFound {
-				http.Error(w, "invalid credentials", http.StatusUnauthorized)
+				writeJSONError(w, http.StatusUnauthorized, "invalid credentials")
 			} else {
-				log.Printf("[Login] database error looking up user: %v", err)
-				http.Error(w, "internal server error", http.StatusInternalServerError)
+				log.Error("[Login] database error", zap.String("username", req.Username), zap.Error(err))
+				writeJSONError(w, http.StatusInternalServerError, "internal server error")
 			}
 			return
 		}
 
 		if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
-			http.Error(w, "invalid credentials", http.StatusUnauthorized)
+			writeJSONError(w, http.StatusUnauthorized, "invalid credentials")
 			return
 		}
 
 		token, err := jwtMgr.Generate(user)
 		if err != nil {
-			http.Error(w, "failed to generate token", http.StatusInternalServerError)
+			writeJSONError(w, http.StatusInternalServerError, "failed to generate token")
 			return
 		}
 
-		resp := LoginResponse{ID: user.ID, Username: user.Username, Token: token}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(resp)
+		rt, err := newRefreshToken()
+		if err != nil {
+			log.Error("[Login] failed to generate refresh token", zap.Error(err))
+			writeJSONError(w, http.StatusInternalServerError, "failed to generate token")
+			return
+		}
+		if err := storeRefreshToken(r.Context(), rdb, rt, user.ID); err != nil {
+			log.Error("[Login] failed to store refresh token", zap.Error(err))
+			writeJSONError(w, http.StatusInternalServerError, "failed to generate token")
+			return
+		}
+
+		writeJSON(w, http.StatusOK, LoginResponse{
+			ID:           user.ID,
+			Username:     user.Username,
+			Token:        token,
+			RefreshToken: rt,
+		})
 	}
 }
 
 // ─────────────────────────────────────────────────────────────
-// List users (contacts)
+// Refresh
+// ─────────────────────────────────────────────────────────────
+
+type refreshRequest struct {
+	RefreshToken string `json:"refresh_token"`
+}
+
+type refreshResponse struct {
+	Token        string `json:"token"`
+	RefreshToken string `json:"refresh_token"`
+}
+
+// RefreshHandler exchanges a valid refresh token for a new access token + rotated refresh token.
+func RefreshHandler(userStore userStorer, jwtMgr *JWTManager, rdb *redis.Client, log *zap.Logger) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req refreshRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "invalid JSON")
+			return
+		}
+		if req.RefreshToken == "" {
+			writeJSONError(w, http.StatusUnauthorized, "refresh_token required")
+			return
+		}
+
+		userID, err := lookupRefreshToken(r.Context(), rdb, req.RefreshToken)
+		if err != nil {
+			writeJSONError(w, http.StatusUnauthorized, "invalid or expired refresh token")
+			return
+		}
+
+		user, err := userStore.GetUserByID(userID)
+		if err != nil {
+			writeJSONError(w, http.StatusUnauthorized, "account not found")
+			return
+		}
+
+		// Rotate: delete old, issue new
+		_ = deleteRefreshToken(r.Context(), rdb, req.RefreshToken)
+
+		newRT, err := newRefreshToken()
+		if err != nil {
+			log.Error("[Refresh] failed to generate refresh token", zap.Error(err))
+			writeJSONError(w, http.StatusInternalServerError, "failed to generate token")
+			return
+		}
+		if err := storeRefreshToken(r.Context(), rdb, newRT, user.ID); err != nil {
+			log.Error("[Refresh] failed to store refresh token", zap.Error(err))
+			writeJSONError(w, http.StatusInternalServerError, "failed to generate token")
+			return
+		}
+
+		token, err := jwtMgr.Generate(user)
+		if err != nil {
+			log.Error("[Refresh] failed to generate access token", zap.Error(err))
+			writeJSONError(w, http.StatusInternalServerError, "failed to generate token")
+			return
+		}
+
+		writeJSON(w, http.StatusOK, refreshResponse{Token: token, RefreshToken: newRT})
+	}
+}
+
+// ─────────────────────────────────────────────────────────────
+// Logout
+// ─────────────────────────────────────────────────────────────
+
+// LogoutHandler revokes the supplied refresh token so it can't be used again.
+func LogoutHandler(rdb *redis.Client) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req refreshRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "invalid JSON")
+			return
+		}
+		if req.RefreshToken != "" {
+			_ = deleteRefreshToken(r.Context(), rdb, req.RefreshToken)
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	}
+}
+
+// ─────────────────────────────────────────────────────────────
+// List users
 // ─────────────────────────────────────────────────────────────
 
 type UserResponse struct {
@@ -178,26 +276,20 @@ type UserResponse struct {
 	Username string `json:"username"`
 }
 
-func ListUsersHandler(userStore userStorer) http.HandlerFunc {
+func ListUsersHandler(userStore userStorer, log *zap.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		users, err := userStore.ListUsers()
 		if err != nil {
-			log.Printf("[ListUsers] failed to list users: %v", err)
-			http.Error(w, "failed to list users", http.StatusInternalServerError)
+			log.Error("[ListUsers] failed to list users", zap.Error(err))
+			writeJSONError(w, http.StatusInternalServerError, "failed to list users")
 			return
 		}
 
 		resp := make([]UserResponse, 0, len(users))
 		for _, u := range users {
-			resp = append(resp, UserResponse{
-				ID:       u.ID,
-				Username: u.Username,
-			})
+			resp = append(resp, UserResponse{ID: u.ID, Username: u.Username})
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(resp); err != nil {
-			log.Printf("[ListUsers] failed to write response: %v", err)
-		}
+		writeJSON(w, http.StatusOK, resp)
 	}
 }

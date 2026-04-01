@@ -4,12 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"go.uber.org/zap"
 
 	"github.com/cole/onyxchat-server/internal/store"
 )
@@ -76,6 +76,7 @@ func StartMessageSubscriber(
 	rdb *redis.Client,
 	msgStore messageStorer,
 	hub *Hub,
+	log *zap.Logger,
 ) error {
 	sub := rdb.Subscribe(ctx, "message.created")
 	defer sub.Close()
@@ -91,13 +92,13 @@ func StartMessageSubscriber(
 			}
 			var ev MessageCreatedEvent
 			if err := json.Unmarshal([]byte(msg.Payload), &ev); err != nil {
-				log.Printf("[RedisSub] invalid payload: %v", err)
+				log.Error("[RedisSub] invalid payload", zap.Error(err))
 				continue
 			}
 
 			fullMsg, err := msgStore.GetByID(ev.MessageID)
 			if err != nil {
-				log.Printf("[RedisSub] failed to load message %d: %v", ev.MessageID, err)
+				log.Error("[RedisSub] failed to load message", zap.Int64("message_id", ev.MessageID), zap.Error(err))
 				continue
 			}
 
@@ -116,6 +117,7 @@ func SendMessageHandler(
 	msgStore messageStorer,
 	hub *Hub,
 	publisher EventPublisher,
+	log *zap.Logger,
 ) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -156,8 +158,8 @@ func SendMessageHandler(
 		)
 		ObserveDBQuery("message_create", dbStart)
 		if err != nil {
-			log.Printf("[SendMessage] failed to save message: %v", err)
-			http.Error(w, "failed to save message", http.StatusInternalServerError)
+			log.Error("[SendMessage] failed to save message", zap.Error(err))
+			writeJSONError(w, http.StatusInternalServerError, "failed to save message")
 			return
 		}
 
@@ -174,7 +176,7 @@ func SendMessageHandler(
 			w.WriteHeader(http.StatusOK)
 		}
 		if err := json.NewEncoder(w).Encode(saved); err != nil {
-			log.Printf("[SendMessage] failed to write response: %v", err)
+			log.Error("[SendMessage] failed to write response", zap.Error(err))
 			return
 		}
 
@@ -190,7 +192,7 @@ func SendMessageHandler(
 			defer cancel()
 
 			if err := publisher.PublishMessageCreated(ctx, ev); err != nil {
-				log.Printf("[SendMessage] failed to publish event: %v", err)
+				log.Error("[SendMessage] failed to publish event", zap.Error(err))
 				MessagePublishFailures.Inc()
 			}
 		}(event)
@@ -205,7 +207,7 @@ type ListMessagesResponse struct {
 	Messages []store.Message `json:"messages"`
 }
 
-func ListMessagesHandler(userStore userStorer, msgStore messageStorer) http.HandlerFunc {
+func ListMessagesHandler(userStore userStorer, msgStore messageStorer, log *zap.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		currentUser := CurrentUser(r)
 		if currentUser == nil {
@@ -237,16 +239,14 @@ func ListMessagesHandler(userStore userStorer, msgStore messageStorer) http.Hand
 		msgs, err := msgStore.ListConversationSince(currentUser.ID, peerUser.ID, sinceID)
 		ObserveDBQuery("message_list", dbStart)
 		if err != nil {
-			log.Printf("[ListMessages] failed to fetch messages: %v", err)
-			http.Error(w, "failed to fetch messages", http.StatusInternalServerError)
+			log.Error("[ListMessages] failed to fetch messages", zap.Error(err))
+			writeJSONError(w, http.StatusInternalServerError, "failed to fetch messages")
 			return
 		}
 
-		log.Printf("[ListMessages] returning %d messages", len(msgs))
-
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(ListMessagesResponse{Messages: msgs}); err != nil {
-			log.Printf("[ListMessages] failed to write response: %v", err)
+			log.Error("[ListMessages] failed to write response", zap.Error(err))
 		}
 	}
 }

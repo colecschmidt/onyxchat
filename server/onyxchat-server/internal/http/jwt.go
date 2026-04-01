@@ -28,7 +28,7 @@ func NewJWTManager(secret string) *JWTManager {
 	}
 	return &JWTManager{
 		secret: []byte(secret),
-		ttl:    24 * time.Hour,
+		ttl:    15 * time.Minute,
 	}
 }
 

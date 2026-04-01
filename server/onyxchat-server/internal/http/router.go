@@ -23,6 +23,7 @@ func NewRouter(
 	allowedOrigins []string,
 	env string,
 	rdb *redis.Client,
+	adminUsername string,
 ) http.Handler {
 	r := mux.NewRouter()
 
@@ -54,16 +55,24 @@ func NewRouter(
 	// Bug fix: /api/v1/register now has IP rate limiting (was missing before)
 	api.Handle("/register",
 		LoginIPRateLimit(ipLimiter)(
-			MaxBodyBytes(1<<20)(http.HandlerFunc(RegisterHandler(userStore, jwtMgr))),
+			MaxBodyBytes(1<<20)(http.HandlerFunc(RegisterHandler(userStore, jwtMgr, rdb, log))),
 		),
 	).Methods(http.MethodPost, http.MethodOptions)
 
 	api.Handle("/login",
 		LoginIPRateLimit(ipLimiter)(
 			MaxBodyBytes(1<<20)(
-				http.HandlerFunc(LoginHandler(userStore, jwtMgr, idLimiter)),
+				http.HandlerFunc(LoginHandler(userStore, jwtMgr, idLimiter, rdb, log)),
 			),
 		),
+	).Methods(http.MethodPost, http.MethodOptions)
+
+	api.Handle("/refresh",
+		MaxBodyBytes(1<<20)(http.HandlerFunc(RefreshHandler(userStore, jwtMgr, rdb, log))),
+	).Methods(http.MethodPost, http.MethodOptions)
+
+	api.Handle("/logout",
+		MaxBodyBytes(1<<20)(http.HandlerFunc(LogoutHandler(rdb))),
 	).Methods(http.MethodPost, http.MethodOptions)
 
 	// ---- protected REST ----
@@ -71,37 +80,37 @@ func NewRouter(
 	protected.Use(AuthMiddleware(jwtMgr, userStore, log))
 	protected.Use(PerUserRateLimit(userLimiter))
 
-	protected.HandleFunc("/users", ListUsersHandler(userStore)).Methods(http.MethodGet, http.MethodOptions)
+	protected.HandleFunc("/users", ListUsersHandler(userStore, log)).Methods(http.MethodGet, http.MethodOptions)
 
 	protected.Handle("/users/me/password",
 		MaxBodyBytes(1<<20)(http.HandlerFunc(ChangePasswordHandler(userStore))),
 	).Methods(http.MethodPatch, http.MethodOptions)
 
 	protected.Handle("/messages",
-		MaxBodyBytes(1<<20)(http.HandlerFunc(SendMessageHandler(userStore, msgStore, hub, publisher))),
+		MaxBodyBytes(1<<20)(http.HandlerFunc(SendMessageHandler(userStore, msgStore, hub, publisher, log))),
 	).Methods(http.MethodPost, http.MethodOptions)
 
-	protected.HandleFunc("/messages", ListMessagesHandler(userStore, msgStore)).Methods(http.MethodGet, http.MethodOptions)
+	protected.HandleFunc("/messages", ListMessagesHandler(userStore, msgStore, log)).Methods(http.MethodGet, http.MethodOptions)
 
-	protected.HandleFunc("/contacts", ListContactsHandler(userStore)).Methods(http.MethodGet, http.MethodOptions)
+	protected.HandleFunc("/contacts", ListContactsHandler(userStore, log)).Methods(http.MethodGet, http.MethodOptions)
 	protected.Handle("/contacts",
-		MaxBodyBytes(1<<20)(http.HandlerFunc(AddContactHandler(userStore))),
+		MaxBodyBytes(1<<20)(http.HandlerFunc(AddContactHandler(userStore, log))),
 	).Methods(http.MethodPost, http.MethodOptions)
-	protected.HandleFunc("/contacts/{username}", RemoveContactHandler(userStore)).Methods(http.MethodDelete, http.MethodOptions)
+	protected.HandleFunc("/contacts/{username}", RemoveContactHandler(userStore, log)).Methods(http.MethodDelete, http.MethodOptions)
 
 	// GDPR account deletion
 	protected.Handle("/account",
-		MaxBodyBytes(1<<20)(http.HandlerFunc(DeleteAccountHandler(userStore))),
+		MaxBodyBytes(1<<20)(http.HandlerFunc(DeleteAccountHandler(userStore, log))),
 	).Methods(http.MethodDelete, http.MethodOptions)
 
 	// ---- admin ----
 	admin := protected.NewRoute().Subrouter()
-	admin.Use(AdminOnly("ashenspellbook"))
+	admin.Use(AdminOnly(adminUsername))
 
-	admin.HandleFunc("/admin/invites", AdminListInvitesHandler(userStore)).Methods(http.MethodGet, http.MethodOptions)
+	admin.HandleFunc("/admin/invites", AdminListInvitesHandler(userStore, log)).Methods(http.MethodGet, http.MethodOptions)
 	admin.Handle("/admin/invites",
-		MaxBodyBytes(1<<20)(http.HandlerFunc(AdminCreateInviteHandler(userStore)))).Methods(http.MethodPost, http.MethodOptions)
-	admin.HandleFunc("/admin/invites/{code}/reset", AdminResetInviteHandler(userStore)).Methods(http.MethodPost, http.MethodOptions)
+		MaxBodyBytes(1<<20)(http.HandlerFunc(AdminCreateInviteHandler(userStore, log)))).Methods(http.MethodPost, http.MethodOptions)
+	admin.HandleFunc("/admin/invites/{code}/reset", AdminResetInviteHandler(userStore, log)).Methods(http.MethodPost, http.MethodOptions)
 
 	// ---- E2E key endpoints ----
 	// PUT  /api/v1/keys          — upload your own public key
