@@ -102,6 +102,8 @@ jobs:
           -e SM_SERVER_ADDR=":8080" \
           -e SM_DB_DSN="postgres://sm:sm@host.docker.internal:5432/sm?sslmode=disable" \
           -e SM_REDIS_ADDR="host.docker.internal:6379" \
+          -e JWT_SECRET="ci-test-secret-not-for-prod" \
+          -e SM_ADMIN_USERNAME="ci-admin" \
           onyxchat-server:ci
 
           for i in {1..60}; do
