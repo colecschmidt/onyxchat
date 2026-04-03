@@ -144,16 +144,10 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
-          aws-region:     ${{ env.AWS_REGION }}
+          aws-region: ${{ env.AWS_REGION }}
 
       - name: login to ECR
-        id: ecr_login
         uses: aws-actions/amazon-ecr-login@v2
-
-      - name: debug AWS identity
-        run: |
-          aws sts get-caller-identity
-          aws ecr describe-repositories --repository-names ${{ env.ECR_REPO }} --region ${{ env.AWS_REGION }}
 
       - uses: docker/setup-buildx-action@v3
 
@@ -167,20 +161,40 @@ jobs:
             ${{ needs.ci.outputs.image_uri }}
             ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPO }}:latest
           cache-from: type=gha
-          cache-to:   type=gha,mode=max
+          cache-to: type=gha,mode=max
 
-      - name: deploy to ECS
+      - name: download current task definition
         run: |
-          aws ecs update-service \
-            --cluster  "${{ env.ECS_CLUSTER }}" \
-            --service  "${{ env.ECS_SERVICE }}" \
-            --force-new-deployment \
-            --output text \
-            --query 'service.serviceName'
+          aws ecs describe-task-definition \
+            --task-definition onyxchat-task \
+            --query taskDefinition > task-definition.json
 
-      - name: wait for stable deployment
+      - name: fill in new image ID in task definition
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name: onyxchat
+          image: ${{ needs.ci.outputs.image_uri }}
+
+      - name: show rendered image
         run: |
-          aws ecs wait services-stable \
+          set -euo pipefail
+          cat "${{ steps.task-def.outputs.task-definition }}" | jq '.containerDefinitions[] | {name, image}'
+
+      - name: deploy new task definition
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.task-def.outputs.task-definition }}
+          service: ${{ env.ECS_SERVICE }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          wait-for-service-stability: true
+
+      - name: dump ECS service events on failure
+        if: failure()
+        run: |
+          aws ecs describe-services \
             --cluster "${{ env.ECS_CLUSTER }}" \
-            --services "${{ env.ECS_SERVICE }}"
-          echo "deployment stable"
+            --services "${{ env.ECS_SERVICE }}" \
+            --query 'services[0].events[0:15]' \
+            --output json
