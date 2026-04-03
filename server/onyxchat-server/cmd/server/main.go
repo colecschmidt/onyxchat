@@ -63,6 +63,7 @@ func main() {
 		logger.Fatal("JWT_SECRET is required in prod (set SM_ENV=prod and JWT_SECRET)")
 	}
 	if env != "prod" && jwtSecret == "" {
+		jwtSecret = "dev-insecure-jwt-secret-change-me"
 		logger.Warn("JWT_SECRET not set; using insecure dev default", zap.String("SM_ENV", env))
 	}
 
@@ -135,7 +136,7 @@ func main() {
 		logger.Fatal("SM_ADMIN_USERNAME is required in prod")
 	}
 	if adminUsername == "" {
-		adminUsername = "ashenspellbook"
+		adminUsername = "admin"
 		logger.Warn("SM_ADMIN_USERNAME not set; using dev default", zap.String("username", adminUsername))
 	}
 

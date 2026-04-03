@@ -22,9 +22,10 @@ type JWTManager struct {
 }
 
 // NewJWTManager reads JWT_SECRET and sets a default TTL.
+// secret must be non-empty; callers are responsible for providing a valid value.
 func NewJWTManager(secret string) *JWTManager {
 	if secret == "" {
-		secret = "dev-insecure-jwt-secret-change-me"
+		panic("NewJWTManager: secret must not be empty")
 	}
 	return &JWTManager{
 		secret: []byte(secret),
