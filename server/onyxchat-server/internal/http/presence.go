@@ -11,8 +11,8 @@ import (
 )
 
 const (
-	presenceNamesKey = "presence:names"   // HASH: userID -> username, only online users
-	presenceConnsKey = "presence:conns:"  // + userID -> INCR/DECR connection counter
+	presenceNamesKey = "presence:names"  // HASH: userID -> username, only online users
+	presenceConnsKey = "presence:conns:" // + userID -> INCR/DECR connection counter
 	presenceChannel  = "presence.events"
 )
 
