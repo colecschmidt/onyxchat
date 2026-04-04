@@ -14,7 +14,7 @@ function setRefreshToken(token: string | null) {
   else localStorage.removeItem(REFRESH_TOKEN_KEY)
 }
 
-async function publishKey(): Promise<void> {
+export async function publishKey(): Promise<void> {
   try {
     const kp     = await getOrCreateKeyPair()
     const pubKey = await exportPublicKey(kp)
