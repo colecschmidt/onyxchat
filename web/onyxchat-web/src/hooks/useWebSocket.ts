@@ -13,7 +13,7 @@ async function fetchWSTicket(): Promise<string> {
   return data.ticket
 }
 
-export function useWebSocket(handlers: WSHandlers) {
+export function useWebSocket(handlers: WSHandlers, enabled = true) {
   const ws = useRef<WebSocket | null>(null)
   const reconnTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const handlersRef = useRef(handlers)
@@ -82,6 +82,9 @@ export function useWebSocket(handlers: WSHandlers) {
     })
 
     socket.addEventListener('close', () => {
+      // Only act if this socket is still the active one — a newer connect()
+      // call may have already replaced ws.current before this event fires.
+      if (ws.current !== socket) return
       ws.current = null
       if (shouldReconnect.current && getToken()) {
         reconnTimer.current = setTimeout(connect, 3000)
@@ -94,6 +97,11 @@ export function useWebSocket(handlers: WSHandlers) {
   }, [])
 
   useEffect(() => {
+    // Don't connect until the user is authenticated (enabled = !!user).
+    // When enabled flips true (login), this effect re-runs and connects.
+    // When enabled flips false (logout), cleanup closes the socket.
+    if (!enabled) return
+
     shouldReconnect.current = true
     connect()
 
@@ -110,7 +118,7 @@ export function useWebSocket(handlers: WSHandlers) {
         ws.current = null
       }
     }
-  }, [connect])
+  }, [connect, enabled])
 
   const send = useCallback((data: unknown) => {
     if (ws.current?.readyState === WebSocket.OPEN) {

@@ -57,6 +57,13 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   activePeerRef.current = activePeer
   useEffect(() => { contactsRef.current = contacts }, [contacts])
 
+  // When the user logs out and back in a new ECDH keypair is generated.
+  // The sharedKeyCache holds AES keys derived from the *previous* private key,
+  // so we must clear it whenever the user identity changes.
+  useEffect(() => {
+    sharedKeyCache.current.clear()
+  }, [user])
+
   // ── Shared key helper ──────────────────────────────────────────────────────
 
   const getSharedKey = useCallback(async (peerUsername: string): Promise<CryptoKey | null> => {
@@ -135,7 +142,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     ))
   }, [])
 
-  const { send } = useWebSocket({ onMessage, onTyping, onPresence })
+  const { send } = useWebSocket({ onMessage, onTyping, onPresence }, !!user)
 
   // ── Contacts ───────────────────────────────────────────────────────────────
 
