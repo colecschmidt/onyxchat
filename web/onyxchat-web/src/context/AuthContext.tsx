@@ -2,7 +2,8 @@
 // One change: logout is now async (calls clearKeyPair from crypto.ts via auth.ts)
 
 import { createContext, useContext, useState, useEffect, type ReactNode } from 'react'
-import { login, logout as apiLogout, register } from '../api/auth'
+import { login, logout as apiLogout, register, refresh as apiRefresh, getRefreshToken } from '../api/auth'
+import { getToken } from '../api/client'
 import type { User } from '../types'
 
 interface AuthState {
@@ -17,13 +18,24 @@ const AuthContext = createContext<AuthState | null>(null)
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(() => {
-    const stored = sessionStorage.getItem('user')
+    const stored = localStorage.getItem('user')
     return stored ? JSON.parse(stored) : null
   })
 
   useEffect(() => {
-    if (user) sessionStorage.setItem('user', JSON.stringify(user))
+    if (user) localStorage.setItem('user', JSON.stringify(user))
+    else localStorage.removeItem('user')
   }, [user])
+
+  // On mount: if we have a stored refresh token but lost the session token,
+  // silently get a new access token so the user doesn't have to log in again.
+  useEffect(() => {
+    if (!getToken() && getRefreshToken()) {
+      apiRefresh().then(newToken => {
+        if (!newToken) setUser(null)
+      })
+    }
+  }, [])
 
   async function handleLogin(username: string, password: string) {
     const data = await login(username, password)

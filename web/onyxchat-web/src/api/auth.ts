@@ -65,7 +65,7 @@ export async function logout(): Promise<void> {
   }
   setToken(null)
   setRefreshToken(null)
-  sessionStorage.removeItem('user')
+  localStorage.removeItem('user')
   await clearKeyPair()
 }
 

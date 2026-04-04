@@ -46,7 +46,7 @@ async function request<T>(method: string, path: string, body?: unknown, isRetry 
     }
     // Refresh failed — clear session and surface the 401
     setToken(null)
-    sessionStorage.removeItem('user')
+    localStorage.removeItem('user')
   }
 
   if (!res.ok) {
