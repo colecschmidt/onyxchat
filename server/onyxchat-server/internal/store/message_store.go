@@ -16,7 +16,7 @@ func (s *MessageStore) Create(senderID, recipientID int64, body, iv string, encr
 		`INSERT INTO messages (sender_id, recipient_id, body, iv, encrypted, created_at)
          VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP)
          RETURNING id, sender_id, recipient_id, body, iv, encrypted, created_at`,
-		senderID, recipientID, body, nullableString(iv), encrypted,
+		senderID, recipientID, body, iv, encrypted,
 	)
 
 	var m Message
@@ -61,14 +61,6 @@ func (s *MessageStore) ListConversationSince(userID, peerID, sinceID int64) ([]M
 		return nil, err
 	}
 	return msgs, nil
-}
-
-// nullableString converts an empty string to SQL NULL.
-func nullableString(s string) interface{} {
-	if s == "" {
-		return nil
-	}
-	return s
 }
 
 func (s *MessageStore) GetByID(id int64) (*Message, error) {
@@ -121,7 +113,7 @@ func (s *MessageStore) CreateOrGetExisting(
 		senderID,
 		recipientID,
 		body,
-		nullableString(iv),
+		iv,
 		encrypted,
 		clientMessageID,
 	).Scan(
