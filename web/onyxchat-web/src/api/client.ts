@@ -18,9 +18,16 @@ export function getToken() {
 
 // Lazily imported to avoid a circular dep (auth.ts → client.ts → auth.ts).
 // Only resolved at call time, after both modules are fully loaded.
+//
+// Refresh lock: if a refresh is already in flight, all concurrent callers
+// wait for the same promise rather than each firing their own /refresh request.
+let refreshPromise: Promise<string | null> | null = null
+
 async function tryRefresh(): Promise<string | null> {
+  if (refreshPromise) return refreshPromise
   const { refresh } = await import('./auth')
-  return refresh()
+  refreshPromise = refresh().finally(() => { refreshPromise = null })
+  return refreshPromise
 }
 
 async function request<T>(method: string, path: string, body?: unknown, isRetry = false): Promise<T> {
