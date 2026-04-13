@@ -287,23 +287,6 @@ resource "aws_lb_listener" "https" {
   }
 }
 
-# HSTS response header — forces browsers to use HTTPS for 1 year
-resource "aws_lb_listener_rule" "hsts" {
-  listener_arn = aws_lb_listener.https.arn
-  priority     = 1
-
-  action {
-    type             = "forward"
-    target_group_arn = aws_lb_target_group.tg.arn
-  }
-
-  condition {
-    path_pattern {
-      values = ["/*"]
-    }
-  }
-}
-
 # ── ECS ────────────────────────────────────────────────────────────────────────
 
 resource "aws_ecs_cluster" "this" {

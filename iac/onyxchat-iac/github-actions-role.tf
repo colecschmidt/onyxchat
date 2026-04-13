@@ -82,8 +82,8 @@ resource "aws_iam_role_policy" "github_deploy" {
           "s3:ListBucket"
         ]
         Resource = [
-          "arn:aws:s3:::onyxchat-tfstate-cole-2025",
-          "arn:aws:s3:::onyxchat-tfstate-cole-2025/*"
+          "arn:aws:s3:::onyxchat-tfstate-prod-001",
+          "arn:aws:s3:::onyxchat-tfstate-prod-001/*"
         ]
       },
       {
