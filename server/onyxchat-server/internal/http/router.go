@@ -7,6 +7,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.uber.org/zap"
 	"golang.org/x/time/rate"
 
@@ -42,9 +43,7 @@ func NewRouter(
 	presenceStore := NewPresenceStore(rdb)
 
 	// ---- basic routes ----
-	if env != "prod" {
-		r.Handle("/metrics", promhttp.Handler()).Methods(http.MethodGet)
-	}
+	r.Handle("/metrics", promhttp.Handler()).Methods(http.MethodGet)
 	r.HandleFunc("/health", HealthHandler).Methods(http.MethodGet)
 	r.HandleFunc("/healthz", HealthHandler).Methods(http.MethodGet)
 	r.HandleFunc("/health/live", LiveHandler).Methods(http.MethodGet)
@@ -129,5 +128,8 @@ func NewRouter(
 	ws := api.NewRoute().Subrouter()
 	ws.Use(WSAuthMiddleware(jwtMgr, rdb, userStore))
 	ws.HandleFunc("/ws", WebSocketHandler(userStore, msgStore, hub, presenceStore, upgrader, log)).Methods(http.MethodGet)
-	return r
+
+	// Wrap with OTel HTTP instrumentation — creates a trace span per request
+	// and propagates W3C trace context headers automatically.
+	return otelhttp.NewHandler(r, "onyxchat-server")
 }

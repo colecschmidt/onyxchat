@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/redis/go-redis/extra/redisotel/v9"
 	"github.com/redis/go-redis/v9"
 
 	serverhttp "github.com/cole/onyxchat-server/internal/http"
@@ -46,6 +47,10 @@ func initLogger() {
 func main() {
 	initLogger()
 	defer logger.Sync()
+
+	// Tracing
+	shutdownTracer := serverhttp.InitTracer(logger)
+	defer shutdownTracer(context.Background())
 
 	// Environment
 	env := os.Getenv("SM_ENV")
@@ -94,6 +99,11 @@ func main() {
 
 	rdb := redis.NewClient(redisOpts)
 	defer rdb.Close()
+
+	// Instrument Redis with OTel — adds a span for every command.
+	if err := redisotel.InstrumentTracing(rdb); err != nil {
+		logger.Warn("failed to instrument Redis with OTel", zap.Error(err))
+	}
 
 	redisCtx, redisCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer redisCancel()

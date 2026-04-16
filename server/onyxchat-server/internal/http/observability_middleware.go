@@ -6,14 +6,15 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 	"github.com/prometheus/client_golang/prometheus"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
-	"strings"
 )
 
 type ctxKey string
@@ -249,8 +250,11 @@ func AccessLogAndMetrics(log *zap.Logger) mux.MiddlewareFunc {
 					HTTPRateLimitRejections.WithLabelValues("http").Inc()
 				}
 
+				spanCtx := trace.SpanFromContext(r.Context()).SpanContext()
 				fields := []zap.Field{
 					zap.String("request_id", GetRequestID(r)),
+					zap.String("trace_id", spanCtx.TraceID().String()),
+					zap.String("span_id", spanCtx.SpanID().String()),
 					zap.String("method", r.Method),
 					zap.String("route", route),
 					zap.String("path", r.URL.Path),

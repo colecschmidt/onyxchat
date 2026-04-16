@@ -7,9 +7,11 @@ import (
 	"os"
 	"time"
 
+	"github.com/XSAM/otelsql"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	_ "github.com/jackc/pgx/v5/stdlib"
+	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 )
 
 func ResolveSecret(envKey, ssmPath string) string {
@@ -34,7 +36,12 @@ func ResolveSecret(envKey, ssmPath string) string {
 
 func MustOpen() *sql.DB {
 	dsn := ResolveSecret("SM_DB_DSN", "/onyxchat/prod/SM_DB_DSN")
-	db, err := sql.Open("pgx", dsn)
+	db, err := otelsql.Open("pgx", dsn,
+		otelsql.WithAttributes(semconv.DBSystemPostgreSQL),
+		otelsql.WithSpanOptions(otelsql.SpanOptions{
+			RecordError: func(err error) bool { return err != nil },
+		}),
+	)
 	if err != nil {
 		log.Fatalf("failed to open db: %v", err)
 	}
