@@ -157,9 +157,7 @@ jobs:
           context: server/onyxchat-server
           file: server/onyxchat-server/Dockerfile
           push: true
-          tags: |
-            ${{ needs.ci.outputs.image_uri }}
-            ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPO }}:latest
+          tags: ${{ needs.ci.outputs.image_uri }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
