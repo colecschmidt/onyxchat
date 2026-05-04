@@ -5,7 +5,7 @@ variable "billing_email" {
 resource "aws_budgets_budget" "monthly" {
   name         = "onyxchat-monthly"
   budget_type  = "COST"
-  limit_amount = "50"
+  limit_amount = "75"
   limit_unit   = "USD"
   time_unit    = "MONTHLY"
 
