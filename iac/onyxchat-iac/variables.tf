@@ -65,3 +65,8 @@ variable "redis_auth_token" {
     error_message = "redis_auth_token must be at least 16 characters."
   }
 }
+variable "admin_username" {
+  type        = string
+  description = "Username of the admin account in prod."
+  default     = "admin"
+}

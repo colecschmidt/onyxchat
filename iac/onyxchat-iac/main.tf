@@ -33,6 +33,10 @@ data "aws_ssm_parameter" "redis_auth_token" {
   name = "/onyxchat/prod/SM_REDIS_AUTH_TOKEN"
 }
 
+data "aws_ssm_parameter" "internal_service_secret" {
+  name = "/onyxchat/prod/INTERNAL_SERVICE_SECRET"
+}
+
 # ── IAM ────────────────────────────────────────────────────────────────────────
 
 data "aws_iam_policy_document" "ecs_task_assume_role" {
@@ -72,6 +76,7 @@ resource "aws_iam_policy" "task_ssm_read" {
           aws_ssm_parameter.db_dsn.arn,
           data.aws_ssm_parameter.jwt_secret.arn,
           data.aws_ssm_parameter.redis_auth_token.arn,
+          data.aws_ssm_parameter.internal_service_secret.arn,
         ]
       }
     ]
@@ -352,6 +357,7 @@ resource "aws_ecs_task_definition" "app" {
         { name = "SM_DB_DSN", valueFrom = aws_ssm_parameter.db_dsn.arn },
         { name = "JWT_SECRET", valueFrom = data.aws_ssm_parameter.jwt_secret.arn },
         { name = "SM_REDIS_AUTH_TOKEN", valueFrom = data.aws_ssm_parameter.redis_auth_token.arn },
+        { name = "INTERNAL_SERVICE_SECRET", valueFrom = data.aws_ssm_parameter.internal_service_secret.arn },
       ]
 
       logConfiguration = {
@@ -457,6 +463,7 @@ locals {
     { name = "SM_SERVER_ADDR", value = ":${var.app_port}" },
     { name = "SM_REDIS_ADDR", value = "${aws_elasticache_replication_group.redis.primary_endpoint_address}:6379" },
     { name = "SM_ALLOWED_ORIGINS", value = "https://onyxchat.dev,https://www.onyxchat.dev" },
+    { name = "SM_ADMIN_USERNAME", value = var.admin_username },
   ]
 }
 
