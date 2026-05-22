@@ -548,5 +548,29 @@ func (h *Hub) SendKeyChangedToUser(userID int64, changedUsername string) {
 	h.sendToUser(userID, keyChangedEvent{Type: "key_changed", Username: changedUsername})
 }
 
+// SendReadReceiptToUser tells the original sender that the recipient has read
+// their messages. messageIDs is the set of message IDs that were just marked read.
+func (h *Hub) SendReadReceiptToUser(senderID, byUserID int64, messageIDs []int64) {
+	type readEvent struct {
+		Type       string  `json:"type"`
+		ByUserID   int64   `json:"byUserId"`
+		MessageIDs []int64 `json:"messageIds"`
+	}
+	h.sendToUser(senderID, readEvent{Type: "message_read", ByUserID: byUserID, MessageIDs: messageIDs})
+}
+
+// SendMessageDeletedToUsers notifies both parties that a message was deleted.
+func (h *Hub) SendMessageDeletedToUsers(senderID, recipientID, messageID int64) {
+	type deletedEvent struct {
+		Type      string `json:"type"`
+		MessageID int64  `json:"messageId"`
+	}
+	evt := deletedEvent{Type: "message_deleted", MessageID: messageID}
+	h.sendToUser(senderID, evt)
+	if recipientID != senderID {
+		h.sendToUser(recipientID, evt)
+	}
+}
+
 // Optional: clean close on server shutdown if you have a global cancel.
 var ErrClientClosed = errors.New("client closed")

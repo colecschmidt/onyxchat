@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -139,8 +140,7 @@ func StartMessageSubscriber(
 					log.Error("[RedisSub] invalid message.deleted payload", zap.Error(err))
 					continue
 				}
-				hub.SendMessageDeletedToUser(ev.SenderID, ev.MessageID)
-				hub.SendMessageDeletedToUser(ev.RecipientID, ev.MessageID)
+				hub.SendMessageDeletedToUsers(ev.SenderID, ev.RecipientID, ev.MessageID)
 			}
 		}
 	}
@@ -261,17 +261,6 @@ func ListMessagesHandler(userStore userStorer, msgStore messageStorer, log *zap.
 			return
 		}
 
-		sinceStr := r.URL.Query().Get("sinceId")
-		var sinceID int64
-		if sinceStr != "" {
-			v, err := strconv.ParseInt(sinceStr, 10, 64)
-			if err != nil || v < 0 {
-				http.Error(w, "sinceId must be a non-negative integer", http.StatusBadRequest)
-				return
-			}
-			sinceID = v
-		}
-
 		limit := defaultPageSize
 		if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
 			if v, err := strconv.Atoi(limitStr); err == nil && v > 0 {
@@ -288,8 +277,35 @@ func ListMessagesHandler(userStore userStorer, msgStore messageStorer, log *zap.
 			return
 		}
 
+		q := r.URL.Query()
+		beforeStr := q.Get("beforeId")
+		sinceStr := q.Get("sinceId")
+
+		var msgs []store.Message
+		var hasMore bool
 		dbStart := time.Now()
-		msgs, hasMore, err := msgStore.ListConversationSince(currentUser.ID, peerUser.ID, sinceID, limit)
+
+		switch {
+		case beforeStr != "":
+			beforeID, parseErr := strconv.ParseInt(beforeStr, 10, 64)
+			if parseErr != nil || beforeID <= 0 {
+				http.Error(w, "beforeId must be a positive integer", http.StatusBadRequest)
+				return
+			}
+			msgs, hasMore, err = msgStore.ListConversationBefore(currentUser.ID, peerUser.ID, beforeID, limit)
+
+		default:
+			var sinceID int64
+			if sinceStr != "" {
+				sinceID, err = strconv.ParseInt(sinceStr, 10, 64)
+				if err != nil || sinceID < 0 {
+					http.Error(w, "sinceId must be a non-negative integer", http.StatusBadRequest)
+					return
+				}
+			}
+			msgs, hasMore, err = msgStore.ListConversationSince(currentUser.ID, peerUser.ID, sinceID, limit)
+		}
+
 		ObserveDBQuery("message_list", dbStart)
 		if err != nil {
 			log.Error("[ListMessages] failed to fetch messages", zap.Error(err))
@@ -305,9 +321,58 @@ func ListMessagesHandler(userStore userStorer, msgStore messageStorer, log *zap.
 }
 
 // ─────────────────────────────────────────────────────────────
+// POST /api/v1/messages/read
+// Body: {"peerUsername":"bob"}
+// Marks all unread messages from bob → me as read.
+// Fires a message_read WS event back to bob.
+// ─────────────────────────────────────────────────────────────
+
+type MarkReadRequest struct {
+	PeerUsername string `json:"peerUsername"`
+}
+
+func MarkReadHandler(userStore userStorer, msgStore messageStorer, hub *Hub, log *zap.Logger) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		currentUser := CurrentUser(r)
+		if currentUser == nil {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		var req MarkReadRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.PeerUsername == "" {
+			http.Error(w, "peerUsername required", http.StatusBadRequest)
+			return
+		}
+
+		peer, err := userStore.GetByUsername(req.PeerUsername)
+		if err != nil || peer == nil {
+			http.Error(w, "peer not found", http.StatusNotFound)
+			return
+		}
+
+		dbStart := time.Now()
+		ids, err := msgStore.MarkRead(currentUser.ID, peer.ID)
+		ObserveDBQuery("message_mark_read", dbStart)
+		if err != nil {
+			log.Error("[MarkRead] db error", zap.Error(err))
+			writeJSONError(w, http.StatusInternalServerError, "failed to mark read")
+			return
+		}
+
+		if len(ids) > 0 {
+			hub.SendReadReceiptToUser(peer.ID, currentUser.ID, ids)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]int{"markedCount": len(ids)})
+	}
+}
+
+// ─────────────────────────────────────────────────────────────
 // DELETE /api/v1/messages/{id}
-// Only the sender may delete their own message.
-// Broadcasts a message_deleted WS event to both sender and recipient.
+// Only the original sender may delete. Publishes to Redis so all server
+// instances broadcast the message_deleted WS event to both parties.
 // ─────────────────────────────────────────────────────────────
 
 func DeleteMessageHandler(
@@ -322,42 +387,36 @@ func DeleteMessageHandler(
 			return
 		}
 
-		vars := mux.Vars(r)
-		msgID, err := strconv.ParseInt(vars["id"], 10, 64)
-		if err != nil || msgID <= 0 {
+		messageID, err := strconv.ParseInt(mux.Vars(r)["id"], 10, 64)
+		if err != nil || messageID <= 0 {
 			http.Error(w, "invalid message id", http.StatusBadRequest)
 			return
 		}
 
-		msg, err := msgStore.GetByID(msgID)
+		dbStart := time.Now()
+		deleted, err := msgStore.SoftDelete(messageID, currentUser.ID)
+		ObserveDBQuery("message_delete", dbStart)
+		if errors.Is(err, store.ErrMessageNotFound) {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
 		if err != nil {
-			http.Error(w, "message not found", http.StatusNotFound)
-			return
-		}
-		if msg.SenderID != currentUser.ID {
-			http.Error(w, "forbidden", http.StatusForbidden)
-			return
-		}
-
-		if err := msgStore.DeleteMessage(msgID, currentUser.ID); err != nil {
-			log.Error("[DeleteMessage] failed to delete", zap.Error(err))
+			log.Error("[DeleteMessage] db error", zap.Error(err))
 			writeJSONError(w, http.StatusInternalServerError, "failed to delete message")
 			return
 		}
 
-		event := MessageDeletedEvent{
-			MessageID:   msgID,
-			SenderID:    currentUser.ID,
-			RecipientID: msg.RecipientID,
-		}
-
-		go func(ev MessageDeletedEvent) {
+		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancel()
-			if err := publisher.PublishMessageDeleted(ctx, ev); err != nil {
+			if err := publisher.PublishMessageDeleted(ctx, MessageDeletedEvent{
+				MessageID:   deleted.ID,
+				SenderID:    deleted.SenderID,
+				RecipientID: deleted.RecipientID,
+			}); err != nil {
 				log.Error("[DeleteMessage] failed to publish event", zap.Error(err))
 			}
-		}(event)
+		}()
 
 		w.WriteHeader(http.StatusNoContent)
 	}

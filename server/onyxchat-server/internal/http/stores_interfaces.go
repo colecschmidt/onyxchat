@@ -38,9 +38,11 @@ type userStorer interface {
 type messageStorer interface {
 	CreateOrGetExisting(senderID, recipientID int64, body, iv string, encrypted bool, clientMessageID string) (*store.Message, bool, error)
 	ListConversationSince(userID, peerID, sinceID int64, limit int) ([]store.Message, bool, error)
+	ListConversationBefore(userID, peerID, beforeID int64, limit int) ([]store.Message, bool, error)
 	GetByID(id int64) (*store.Message, error)
 	GetUnreadForUser(userID, sinceID int64) ([]store.Message, error)
-	DeleteMessage(id, senderID int64) error
+	MarkRead(recipientID, senderID int64) ([]int64, error)
+	SoftDelete(messageID, senderID int64) (*store.Message, error)
 }
 
 // Compile-time checks: the real store types must satisfy the interfaces.

@@ -242,21 +242,49 @@ func (f *fakeMessageStore) GetByID(id int64) (*store.Message, error) {
 func (f *fakeMessageStore) GetUnreadForUser(userID, sinceID int64) ([]store.Message, error) {
 	var out []store.Message
 	for _, m := range f.messages {
-		if m.RecipientID == userID && m.ID > sinceID {
+		if m.RecipientID == userID && m.ID > sinceID && m.DeletedAt == nil {
 			out = append(out, *m)
 		}
 	}
 	return out, nil
 }
 
-func (f *fakeMessageStore) DeleteMessage(id, senderID int64) error {
-	for i, m := range f.messages {
-		if m.ID == id && m.SenderID == senderID {
-			f.messages = append(f.messages[:i], f.messages[i+1:]...)
-			return nil
+func (f *fakeMessageStore) ListConversationBefore(userID, peerID, beforeID int64, limit int) ([]store.Message, bool, error) {
+	var out []store.Message
+	for _, m := range f.messages {
+		if m.ID < beforeID &&
+			((m.SenderID == userID && m.RecipientID == peerID) ||
+				(m.SenderID == peerID && m.RecipientID == userID)) {
+			out = append(out, *m)
 		}
 	}
-	return sql.ErrNoRows
+	if len(out) > limit {
+		return out[:limit], true, nil
+	}
+	return out, false, nil
+}
+
+func (f *fakeMessageStore) MarkRead(recipientID, senderID int64) ([]int64, error) {
+	var ids []int64
+	for _, m := range f.messages {
+		if m.RecipientID == recipientID && m.SenderID == senderID && m.ReadAt == nil && m.DeletedAt == nil {
+			now := time.Now()
+			m.ReadAt = &now
+			ids = append(ids, m.ID)
+		}
+	}
+	return ids, nil
+}
+
+func (f *fakeMessageStore) SoftDelete(messageID, senderID int64) (*store.Message, error) {
+	for _, m := range f.messages {
+		if m.ID == messageID && m.SenderID == senderID && m.DeletedAt == nil {
+			now := time.Now()
+			m.DeletedAt = &now
+			return m, nil
+		}
+	}
+	return nil, store.ErrMessageNotFound
 }
 
 // fakePublisher satisfies EventPublisher without Redis.
