@@ -21,20 +21,29 @@ Client (React PWA)
     ├── onyxchat.dev ────────► Cloudflare Pages (CDN, global edge)
     │
     └── api.onyxchat.dev ────► AWS ALB (TLS via ACM)
-                                    │
+                                    │  /internal/* → 403 (ALB rule)
+                                    │  /* → forward
                           ┌─────────┴──────────┐
                           ▼                    ▼
                    ECS Fargate (Go)     ECS Fargate (Go)
-                   task 1               task 2
+                   API server            API server
                           │
           ┌───────────────┼────────────────┐
           ▼               ▼                ▼
-   RDS PostgreSQL   ElastiCache Redis   CloudWatch Logs
-   (users, messages, (pub/sub fanout,   (90d retention)
-    invite codes)    WS tickets)
+   RDS PostgreSQL   ElastiCache Redis   SSM Parameter
+   (users, messages, (pub/sub fanout,    Store (secrets)
+    push tokens)     presence, tickets)
+                          │
+                          ▼ message.created / message.deleted
+                   ECS Fargate (Go)
+                   notification-service
+                   - presence check (Redis)
+                   - push token fetch (X-Service-Secret)
+                   - retry w/ exponential backoff
+                   - distributed tracing (OTel → Tempo)
 ```
 
-Two ECS tasks run behind a load balancer. Redis pub/sub fans out WebSocket messages across instances. PostgreSQL persists all messages. Secrets live in SSM Parameter Store — never in environment variables or code.
+Two API tasks run behind a load balancer. Redis pub/sub fans out WebSocket messages and events across instances. The notification service runs as a separate process, authenticates to the API server via a shared secret, and delivers offline push notifications. Secrets live in SSM Parameter Store — never in environment variables or code.
 
 ---
 
@@ -84,14 +93,20 @@ Private keys are stored in IndexedDB as non-extractable `CryptoKey` objects. The
 
 - ✅ End-to-end encryption (ECDH P-256 + AES-256-GCM)
 - ✅ Real-time messaging over WebSocket
+- ✅ Read receipts and message deletion (soft delete with placeholder)
+- ✅ Cursor-based pagination (`sinceId` / `beforeId`)
 - ✅ Presence (online/offline status)
 - ✅ Typing indicators
 - ✅ Invite-only registration
 - ✅ JWT authentication with secure WS ticket exchange
-- ✅ Redis pub/sub fanout across multiple backend instances
+- ✅ Redis pub/sub fanout across multiple stateless backend instances
 - ✅ Idempotent message delivery (client-generated IDs, `ON CONFLICT`)
-- ✅ Offline message catch-up on reconnect (`sinceId`)
+- ✅ Offline message catch-up on reconnect
+- ✅ Notification service with service-to-service auth (`X-Service-Secret`)
+- ✅ Distributed tracing across services (OTel → Tempo, W3C traceparent through Redis)
+- ✅ Prometheus metrics + Grafana dashboards + Loki structured logs
 - ✅ Per-user and per-IP rate limiting
+- ✅ GDPR account deletion
 - ✅ Automated CI/CD — push to main, live in 90 seconds
 - ✅ Java desktop client
 
@@ -133,10 +148,12 @@ AWS credentials use **OIDC** — no long-lived access keys stored anywhere.
 
 ```
 onyxchat/
-├── server/          # Go backend (API, WebSocket, E2EE, Redis pub/sub)
-├── web/             # React PWA frontend
-├── iac/             # Terraform (ECS, RDS, Redis, ALB, IAM, SSM)
-└── desktop/         # Java/JavaFX desktop client
+├── server/
+│   ├── onyxchat-server/       # Go API server (auth, messaging, WebSocket, E2EE)
+│   └── notification-service/  # Go notification service (pub/sub, service auth, tracing)
+├── web/                       # React PWA frontend
+├── iac/                       # Terraform (ECS, RDS, Redis, ALB, IAM, SSM)
+└── desktop/                   # Java 21 / JavaFX desktop client
 ```
 
 ---
