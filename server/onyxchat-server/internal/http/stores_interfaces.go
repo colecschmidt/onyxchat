@@ -20,6 +20,8 @@ type userStorer interface {
 	ConsumeInviteCode(code, username string) error
 	SetPublicKey(userID int64, pubKey string) error
 	GetPublicKeyByUsername(username string) (string, error)
+	SetPushToken(userID int64, token string) error
+	GetPushToken(userID int64) (string, error)
 	Ping(ctx context.Context) error
 	AdminListInvites() ([]store.InviteCodeFull, error)
 	AdminCreateInvite(code, createdBy string, expiresAt *time.Time) (*store.InviteCodeFull, error)

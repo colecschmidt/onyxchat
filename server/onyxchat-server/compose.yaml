@@ -50,6 +50,24 @@ services:
       - "8080:8080"
     restart: unless-stopped
 
+  notification-service:
+    build:
+      context: ../../server/notification-service
+      dockerfile: Dockerfile
+    image: onyxchat-notification-service:latest
+    env_file:
+      - .env.dev
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: tempo:4317
+    depends_on:
+      redis:
+        condition: service_healthy
+      tempo:
+        condition: service_started
+    ports:
+      - "9091:9091"
+    restart: unless-stopped
+
   # ── Observability stack ──────────────────────────────────────────────────────
 
   tempo:

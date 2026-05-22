@@ -25,6 +25,7 @@ func NewRouter(
 	env string,
 	rdb *redis.Client,
 	adminUsername string,
+	serviceSecret string,
 ) http.Handler {
 	r := mux.NewRouter()
 
@@ -125,6 +126,16 @@ func NewRouter(
 	).Methods(http.MethodPut, http.MethodOptions)
 
 	protected.HandleFunc("/keys/{username}", GetKeyHandler(userStore)).Methods(http.MethodGet, http.MethodOptions)
+
+	protected.Handle("/users/me/push-token",
+		MaxBodyBytes(512)(http.HandlerFunc(RegisterPushTokenHandler(userStore))),
+	).Methods(http.MethodPut, http.MethodOptions)
+
+	// ---- /internal — service-to-service only, blocked at LB in prod ----
+	internal := r.PathPrefix("/internal").Subrouter()
+	internal.Use(InternalServiceAuth(serviceSecret))
+	internal.HandleFunc("/users/{id}/push-token", InternalGetPushTokenHandler(userStore)).Methods(http.MethodGet)
+
 	protected.Handle("/ws/ticket",
 		MaxBodyBytes(1<<20)(http.HandlerFunc(WSTicketHandler(rdb))),
 	).Methods(http.MethodPost, http.MethodOptions)

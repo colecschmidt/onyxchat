@@ -185,6 +185,19 @@ func (f *fakeUserStore) DeleteAccountGDPR(userID int64) (*store.GDPRDeletionReco
 	}, nil
 }
 
+func (f *fakeUserStore) SetPushToken(userID int64, token string) error {
+	for _, u := range f.users {
+		if u.ID == userID {
+			return nil
+		}
+	}
+	return store.ErrUserNotFound
+}
+
+func (f *fakeUserStore) GetPushToken(userID int64) (string, error) {
+	return "", nil
+}
+
 // ─────────────────────────────────────────────────────────────
 
 type fakeMessageStore struct {

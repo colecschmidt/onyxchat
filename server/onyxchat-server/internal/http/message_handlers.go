@@ -12,6 +12,8 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
 	"go.uber.org/zap"
 
 	"github.com/cole/onyxchat-server/internal/store"
@@ -39,10 +41,11 @@ type SendMessageRequest struct {
 }
 
 type MessageCreatedEvent struct {
-	MessageID       int64  `json:"messageId"`
-	SenderID        int64  `json:"senderId"`
-	RecipientID     int64  `json:"recipientId"`
-	ClientMessageID string `json:"clientMessageId"`
+	MessageID       int64             `json:"messageId"`
+	SenderID        int64             `json:"senderId"`
+	RecipientID     int64             `json:"recipientId"`
+	ClientMessageID string            `json:"clientMessageId"`
+	TraceContext    map[string]string `json:"traceContext,omitempty"`
 }
 
 type MessageDeletedEvent struct {
@@ -219,11 +222,18 @@ func SendMessageHandler(
 			return
 		}
 
+		// Capture the trace context from the request span before launching a
+		// goroutine with its own background context. This lets the notification
+		// service continue the trace as a child span rather than starting fresh.
+		traceCarrier := propagation.MapCarrier{}
+		otel.GetTextMapPropagator().Inject(r.Context(), traceCarrier)
+
 		event := MessageCreatedEvent{
 			MessageID:       saved.ID,
 			SenderID:        saved.SenderID,
 			RecipientID:     saved.RecipientID,
 			ClientMessageID: req.ClientMessageID,
+			TraceContext:    map[string]string(traceCarrier),
 		}
 
 		go func(ev MessageCreatedEvent) {

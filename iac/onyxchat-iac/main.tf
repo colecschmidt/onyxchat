@@ -287,6 +287,29 @@ resource "aws_lb_listener" "https" {
   }
 }
 
+# Block /internal/* at the ALB so service-to-service endpoints are never
+# reachable from the public internet. The X-Service-Secret header check in the
+# application is a second layer of defense, not the first.
+resource "aws_lb_listener_rule" "block_internal" {
+  listener_arn = aws_lb_listener.https.arn
+  priority     = 1
+
+  condition {
+    path_pattern {
+      values = ["/internal/*"]
+    }
+  }
+
+  action {
+    type = "fixed-response"
+    fixed_response {
+      content_type = "text/plain"
+      message_body = "Forbidden"
+      status_code  = "403"
+    }
+  }
+}
+
 # ── ECS ────────────────────────────────────────────────────────────────────────
 
 resource "aws_ecs_cluster" "this" {

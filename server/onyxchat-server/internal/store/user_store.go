@@ -213,6 +213,23 @@ func (s *UserStore) GetPublicKeyByUsername(username string) (string, error) {
 	return key.String, nil
 }
 
+func (s *UserStore) SetPushToken(userID int64, token string) error {
+	_, err := s.db.Exec(`UPDATE users SET push_token = $1 WHERE id = $2`, token, userID)
+	return err
+}
+
+func (s *UserStore) GetPushToken(userID int64) (string, error) {
+	var token sql.NullString
+	err := s.db.QueryRow(`SELECT push_token FROM users WHERE id = $1`, userID).Scan(&token)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", ErrUserNotFound
+		}
+		return "", err
+	}
+	return token.String, nil
+}
+
 // ─────────────────────────────────────────────────────────────
 // Invite codes
 // ─────────────────────────────────────────────────────────────

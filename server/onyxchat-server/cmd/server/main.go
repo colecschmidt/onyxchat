@@ -150,6 +150,13 @@ func main() {
 		return serverhttp.StartPresenceSubscriber(ctx, rdb, hub, userStore, logger)
 	})
 
+	// Service-to-service secret — shared with the notification service
+	serviceSecret := os.Getenv("INTERNAL_SERVICE_SECRET")
+	if serviceSecret == "" {
+		serviceSecret = "dev-insecure-service-secret"
+		logger.Warn("INTERNAL_SERVICE_SECRET not set; using insecure dev default")
+	}
+
 	// Admin username
 	adminUsername := os.Getenv("SM_ADMIN_USERNAME")
 	if env == "prod" && adminUsername == "" {
@@ -178,6 +185,7 @@ func main() {
 		env,
 		rdb,
 		adminUsername,
+		serviceSecret,
 	)
 
 	// Server

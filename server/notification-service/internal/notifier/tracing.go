@@ -1,4 +1,4 @@
-package http
+package notifier
 
 import (
 	"context"
@@ -14,14 +14,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// InitTracer sets up the OpenTelemetry trace provider.
-//
-// If OTEL_EXPORTER_OTLP_ENDPOINT is set (e.g. "tempo:4317"), spans are
-// exported via OTLP gRPC. Otherwise a no-op provider is used so the binary
-// runs fine in prod without a collector configured.
-//
-// Returns a shutdown function that must be called on server exit to flush
-// any buffered spans.
 func InitTracer(log *zap.Logger) func(context.Context) {
 	endpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
 	if endpoint == "" {
@@ -29,9 +21,7 @@ func InitTracer(log *zap.Logger) func(context.Context) {
 		return func(context.Context) {}
 	}
 
-	ctx := context.Background()
-
-	exp, err := otlptracegrpc.New(ctx,
+	exp, err := otlptracegrpc.New(context.Background(),
 		otlptracegrpc.WithEndpoint(endpoint),
 		otlptracegrpc.WithInsecure(),
 	)
@@ -40,15 +30,9 @@ func InitTracer(log *zap.Logger) func(context.Context) {
 		return func(context.Context) {}
 	}
 
-	res, err := resource.New(ctx,
-		resource.WithAttributes(
-			semconv.ServiceName("onyxchat-server"),
-		),
+	res, _ := resource.New(context.Background(),
+		resource.WithAttributes(semconv.ServiceName("notification-service")),
 	)
-	if err != nil {
-		log.Warn("failed to create OTel resource", zap.Error(err))
-		res = resource.Default()
-	}
 
 	tp := sdktrace.NewTracerProvider(
 		sdktrace.WithBatcher(exp),
@@ -56,6 +40,9 @@ func InitTracer(log *zap.Logger) func(context.Context) {
 		sdktrace.WithSampler(sdktrace.AlwaysSample()),
 	)
 	otel.SetTracerProvider(tp)
+
+	// W3C traceparent propagation — must match the main server's propagator so
+	// spans extracted from Redis payloads link to the originating request trace.
 	otel.SetTextMapPropagator(propagation.TraceContext{})
 
 	log.Info("tracing enabled", zap.String("endpoint", endpoint))
