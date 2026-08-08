@@ -37,6 +37,15 @@ data "aws_ssm_parameter" "internal_service_secret" {
   name = "/onyxchat/prod/INTERNAL_SERVICE_SECRET"
 }
 
+# Only created once sentry_dsn is provided (see variables.tf) — the app runs
+# fine without Sentry configured, so this stays a no-op until you have a DSN.
+resource "aws_ssm_parameter" "sentry_dsn" {
+  count = var.sentry_dsn != "" ? 1 : 0
+  name  = "/onyxchat/prod/SENTRY_DSN"
+  type  = "SecureString"
+  value = var.sentry_dsn
+}
+
 # ── IAM ────────────────────────────────────────────────────────────────────────
 
 data "aws_iam_policy_document" "ecs_task_assume_role" {
@@ -72,12 +81,12 @@ resource "aws_iam_policy" "task_ssm_read" {
       {
         Effect = "Allow"
         Action = ["ssm:GetParameter", "ssm:GetParameters"]
-        Resource = [
+        Resource = concat([
           aws_ssm_parameter.db_dsn.arn,
           data.aws_ssm_parameter.jwt_secret.arn,
           data.aws_ssm_parameter.redis_auth_token.arn,
           data.aws_ssm_parameter.internal_service_secret.arn,
-        ]
+        ], aws_ssm_parameter.sentry_dsn[*].arn)
       }
     ]
   })
@@ -353,12 +362,14 @@ resource "aws_ecs_task_definition" "app" {
 
       environment = local.app_env
 
-      secrets = [
+      secrets = concat([
         { name = "SM_DB_DSN", valueFrom = aws_ssm_parameter.db_dsn.arn },
         { name = "JWT_SECRET", valueFrom = data.aws_ssm_parameter.jwt_secret.arn },
         { name = "SM_REDIS_AUTH_TOKEN", valueFrom = data.aws_ssm_parameter.redis_auth_token.arn },
         { name = "INTERNAL_SERVICE_SECRET", valueFrom = data.aws_ssm_parameter.internal_service_secret.arn },
-      ]
+        ], [
+        for p in aws_ssm_parameter.sentry_dsn : { name = "SENTRY_DSN", valueFrom = p.arn }
+      ])
 
       logConfiguration = {
         logDriver = "awslogs"
@@ -406,51 +417,10 @@ resource "aws_ecs_service" "app" {
   depends_on = [aws_lb_listener.https]
 }
 
-# ── ECS Autoscaling ────────────────────────────────────────────────────────────
-
-resource "aws_appautoscaling_target" "ecs" {
-  max_capacity       = 6
-  min_capacity       = 2
-  resource_id        = "service/${aws_ecs_cluster.this.name}/${aws_ecs_service.app.name}"
-  scalable_dimension = "ecs:service:DesiredCount"
-  service_namespace  = "ecs"
-
-  depends_on = [aws_ecs_service.app]
-}
-
-resource "aws_appautoscaling_policy" "cpu" {
-  name               = "${var.app_name}-cpu-scaling"
-  policy_type        = "TargetTrackingScaling"
-  resource_id        = aws_appautoscaling_target.ecs.resource_id
-  scalable_dimension = aws_appautoscaling_target.ecs.scalable_dimension
-  service_namespace  = aws_appautoscaling_target.ecs.service_namespace
-
-  target_tracking_scaling_policy_configuration {
-    predefined_metric_specification {
-      predefined_metric_type = "ECSServiceAverageCPUUtilization"
-    }
-    target_value       = 70.0
-    scale_in_cooldown  = 300
-    scale_out_cooldown = 60
-  }
-}
-
-resource "aws_appautoscaling_policy" "memory" {
-  name               = "${var.app_name}-memory-scaling"
-  policy_type        = "TargetTrackingScaling"
-  resource_id        = aws_appautoscaling_target.ecs.resource_id
-  scalable_dimension = aws_appautoscaling_target.ecs.scalable_dimension
-  service_namespace  = aws_appautoscaling_target.ecs.service_namespace
-
-  target_tracking_scaling_policy_configuration {
-    predefined_metric_specification {
-      predefined_metric_type = "ECSServiceAverageMemoryUtilization"
-    }
-    target_value       = 70.0
-    scale_in_cooldown  = 300
-    scale_out_cooldown = 60
-  }
-}
+# ECS autoscaling (target + step-scaling policies) lives in ecr.tf — that's
+# the version actually deployed. A duplicate target-tracking version briefly
+# existed here (commit e9fafd0) but never applied since Terraform rejects
+# duplicate resource names; removed.
 
 # ── Locals ─────────────────────────────────────────────────────────────────────
 

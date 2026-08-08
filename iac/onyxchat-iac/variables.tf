@@ -70,3 +70,10 @@ variable "admin_username" {
   description = "Username of the admin account in prod."
   default     = "admin"
 }
+
+variable "sentry_dsn" {
+  type        = string
+  sensitive   = true
+  description = "Sentry DSN for the backend. Leave empty to skip creating Sentry resources (app runs fine without it). Pass via -var or TF_VAR_sentry_dsn."
+  default     = ""
+}
