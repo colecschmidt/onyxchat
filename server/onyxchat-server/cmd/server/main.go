@@ -58,6 +58,10 @@ func main() {
 		env = "dev"
 	}
 
+	var sentryFlush func()
+	logger, sentryFlush = serverhttp.InitSentry(logger, env)
+	defer sentryFlush()
+
 	addr := os.Getenv("SM_SERVER_ADDR")
 	if addr == "" {
 		addr = ":8080"

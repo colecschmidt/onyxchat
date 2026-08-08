@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/getsentry/sentry-go"
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 	"github.com/prometheus/client_golang/prometheus"
@@ -224,6 +225,9 @@ func AccessLogAndMetrics(log *zap.Logger) mux.MiddlewareFunc {
 
 			defer func() {
 				if rec := recover(); rec != nil {
+					sentry.CurrentHub().Recover(rec)
+					sentry.Flush(2 * time.Second)
+
 					log.Error("panic_recovered",
 						zap.String("request_id", GetRequestID(r)),
 						zap.String("method", r.Method),
