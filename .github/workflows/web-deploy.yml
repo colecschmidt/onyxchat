@@ -30,6 +30,7 @@ jobs:
         working-directory: web/onyxchat-web
         env:
           VITE_API_URL: https://api.onyxchat.dev
+          VITE_SENTRY_DSN: ${{ secrets.SENTRY_WEB_DSN }}
         run: npm run build
 
       - name: Deploy to Cloudflare Pages

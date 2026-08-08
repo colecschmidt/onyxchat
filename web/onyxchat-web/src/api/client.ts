@@ -1,3 +1,5 @@
+import { Sentry } from '../lib/sentry'
+
 const BASE_URL = import.meta.env.VITE_API_URL ?? ''
 
 if (!BASE_URL) {
@@ -39,11 +41,17 @@ async function request<T>(method: string, path: string, body?: unknown, isRetry 
 
   if (token) headers['Authorization'] = `Bearer ${token}`
 
-  const res = await fetch(`${BASE_URL}${path}`, {
-    method,
-    headers,
-    body: body ? JSON.stringify(body) : undefined,
-  })
+  let res: Response
+  try {
+    res = await fetch(`${BASE_URL}${path}`, {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
+    })
+  } catch (err) {
+    Sentry.captureException(err, { extra: { method, path } })
+    throw err
+  }
 
   if (res.status === 401 && !isRetry && path !== '/api/v1/refresh' && path !== '/api/v1/login') {
     const newToken = await tryRefresh()
@@ -58,7 +66,11 @@ async function request<T>(method: string, path: string, body?: unknown, isRetry 
 
   if (!res.ok) {
     const text = await res.text()
-    throw new Error(text || res.statusText)
+    const message = text || res.statusText
+    if (res.status >= 500) {
+      Sentry.captureMessage(`API ${method} ${path} -> ${res.status}: ${message}`, 'error')
+    }
+    throw new Error(message)
   }
 
   const ct = res.headers.get('content-type') || ''
