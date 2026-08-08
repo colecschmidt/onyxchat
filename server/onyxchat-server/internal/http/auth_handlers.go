@@ -2,6 +2,7 @@ package http
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -72,11 +73,14 @@ func RegisterHandler(userStore userStorer, jwtMgr *JWTManager, rdb *redis.Client
 		ObserveDBQuery("user_register", dbStart)
 		if err != nil {
 			log.Warn("[Register] could not create user", zap.String("username", req.Username), zap.Error(err))
-			if strings.Contains(err.Error(), "invalid or already used invite code") {
+			switch {
+			case errors.Is(err, store.ErrInvalidInviteCode):
 				writeJSONError(w, http.StatusForbidden, "invalid or already used invite code")
-				return
+			case errors.Is(err, store.ErrUsernameTaken):
+				writeJSONError(w, http.StatusConflict, "username already taken")
+			default:
+				writeJSONError(w, http.StatusInternalServerError, "failed to create user")
 			}
-			writeJSONError(w, http.StatusInternalServerError, "failed to create user")
 			return
 		}
 

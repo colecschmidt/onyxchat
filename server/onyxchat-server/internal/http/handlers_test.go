@@ -79,7 +79,7 @@ func (f *fakeUserStore) addInvite(code string) { f.inviteCodes[code] = true }
 
 func (f *fakeUserStore) CreateUser(username, passwordHash string) (*store.User, error) {
 	if _, exists := f.users[username]; exists {
-		return nil, errors.New("username already taken")
+		return nil, store.ErrUsernameTaken
 	}
 	u := &store.User{ID: f.nextID, Username: username, PasswordHash: passwordHash}
 	f.nextID++
@@ -120,7 +120,7 @@ func (f *fakeUserStore) SearchUsers(query string) ([]*store.User, error) {
 func (f *fakeUserStore) ConsumeInviteCode(code, _ string) error {
 	available, exists := f.inviteCodes[code]
 	if !exists || !available {
-		return errors.New("invalid or already used invite code")
+		return store.ErrInvalidInviteCode
 	}
 	f.inviteCodes[code] = false
 	return nil
@@ -447,6 +447,31 @@ func TestRegisterHandler_InviteCodeSingleUse(t *testing.T) {
 		if rr.Code != want {
 			t.Fatalf("attempt %d: expected %d, got %d", i+1, want, rr.Code)
 		}
+	}
+}
+
+func TestRegisterHandler_DuplicateUsername(t *testing.T) {
+	us := newFakeUserStore()
+	us.addInvite("CODE-1")
+	us.addInvite("CODE-2")
+	h := RegisterHandler(us, newTestJWT(), newTestRDB(t), zap.NewNop())
+
+	first := mustMarshal(t, map[string]string{
+		"username": "alice", "password": "secret123", "invite_code": "CODE-1",
+	})
+	rr := httptest.NewRecorder()
+	h(rr, httptest.NewRequest(http.MethodPost, "/register", first))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("first registration: expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	second := mustMarshal(t, map[string]string{
+		"username": "alice", "password": "otherpass", "invite_code": "CODE-2",
+	})
+	rr = httptest.NewRecorder()
+	h(rr, httptest.NewRequest(http.MethodPost, "/register", second))
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", rr.Code, rr.Body.String())
 	}
 }
 
