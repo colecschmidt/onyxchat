@@ -41,6 +41,18 @@ func InitSentry(log *zap.Logger, env string) (*zap.Logger, func()) {
 	return augmented, func() { sentry.Flush(2 * time.Second) }
 }
 
+// skipSentryKey marks a log entry that should still go through the normal
+// logging core but must never be forwarded to Sentry. Attach it via
+// SkipSentry() to expected error-level entries (e.g. a failed readiness
+// probe) that would otherwise burn the Sentry error quota.
+const skipSentryKey = "skip_sentry"
+
+// SkipSentry returns a zap field that suppresses Sentry forwarding for the
+// log entry it's attached to, without affecting normal logging.
+func SkipSentry() zap.Field {
+	return zap.Bool(skipSentryKey, true)
+}
+
 // sentryCore is a zapcore.Core that forwards Error+ level entries to Sentry.
 // It's teed alongside the normal logging core rather than replacing it.
 type sentryCore struct {
@@ -72,6 +84,12 @@ func (c *sentryCore) Write(ent zapcore.Entry, fields []zapcore.Field) error {
 	var capturedErr error
 	extra := make(map[string]any, len(all))
 	for _, f := range all {
+		if f.Key == skipSentryKey {
+			if f.Type == zapcore.BoolType && f.Integer == 1 {
+				return nil
+			}
+			continue
+		}
 		if f.Type == zapcore.ErrorType {
 			if err, ok := f.Interface.(error); ok {
 				capturedErr = err

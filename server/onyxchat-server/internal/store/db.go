@@ -45,9 +45,16 @@ func MustOpen() *sql.DB {
 	if err != nil {
 		log.Fatalf("failed to open db: %v", err)
 	}
-	db.SetMaxOpenConns(25)
-	db.SetMaxIdleConns(25)
+	// db.t4g.micro's default parameter group caps Postgres at ~112 total
+	// connections. ECS autoscaling allows up to 6 tasks, and a rolling
+	// deploy can run up to 200% of desired count concurrently — worst case
+	// ~12 tasks. Sized so 12 * maxOpenConnsPerTask stays well under the
+	// server-wide ceiling, leaving headroom for migrations/admin access.
+	const maxOpenConnsPerTask = 8
+	db.SetMaxOpenConns(maxOpenConnsPerTask)
+	db.SetMaxIdleConns(maxOpenConnsPerTask)
 	db.SetConnMaxLifetime(5 * time.Minute)
+	db.SetConnMaxIdleTime(1 * time.Minute)
 	if err := db.Ping(); err != nil {
 		log.Fatalf("failed to ping db: %v", err)
 	}

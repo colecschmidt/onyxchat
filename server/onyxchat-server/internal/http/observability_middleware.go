@@ -288,6 +288,9 @@ func AccessLogAndMetrics(log *zap.Logger) mux.MiddlewareFunc {
 
 				switch {
 				case sw.status >= 500:
+					if isHealthCheckRoute(route) {
+						fields = append(fields, SkipSentry())
+					}
 					log.Error("http_request", fields...)
 				case sw.status >= 400:
 					log.Warn("http_request", fields...)
@@ -318,6 +321,15 @@ func clientIP(r *http.Request) string {
 		return host
 	}
 	return r.RemoteAddr
+}
+
+func isHealthCheckRoute(route string) bool {
+	switch route {
+	case "/health", "/healthz", "/health/live", "/health/ready":
+		return true
+	default:
+		return false
+	}
 }
 
 func requestScheme(r *http.Request) string {
