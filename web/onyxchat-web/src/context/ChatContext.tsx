@@ -5,10 +5,11 @@ import {
 
 import { useWebSocket }                              from '../hooks/useWebSocket'
 import { fetchMessages, sendMessage as apiSendMessage, deleteMessage as apiDeleteMessage } from '../api/messages'
-import { fetchPublicKey }                            from '../api/keys'
+import { fetchPublicKey, uploadPublicKey }           from '../api/keys'
 import { useAuth }                                   from './AuthContext'
 import {
   getOrCreateKeyPair,
+  exportPublicKey,
   deriveSharedKey,
   encryptMessage,
   decryptMessage,
@@ -84,8 +85,17 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     if (cached && cached.pubKey === theirPubKeyB64) return cached.key
 
     // Derive fresh shared key (peer rotated their keypair, or first time)
-    const kp        = await getOrCreateKeyPair(user.username)
-    const sharedKey = await deriveSharedKey(kp.privateKey, theirPubKeyB64)
+    const { keyPair, isNew } = await getOrCreateKeyPair(user.username)
+    if (isNew) {
+      // A keypair generated here has never been published — without this,
+      // peers keep deriving against our old (or no) public key forever.
+      try {
+        await uploadPublicKey(await exportPublicKey(keyPair))
+      } catch (err) {
+        console.warn('[E2E] Could not publish newly generated key:', err)
+      }
+    }
+    const sharedKey = await deriveSharedKey(keyPair.privateKey, theirPubKeyB64)
     sharedKeyCache.current.set(peerUsername, { key: sharedKey, pubKey: theirPubKeyB64 })
     return sharedKey
   }, [user])

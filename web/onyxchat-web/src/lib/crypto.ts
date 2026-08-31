@@ -61,11 +61,17 @@ async function idbDelete(db: IDBDatabase, username: string): Promise<void> {
 
 // ─── Key lifecycle ────────────────────────────────────────────────────────────
 
-/** Returns the stored keypair for this account, generating + persisting a new one if absent. */
-export async function getOrCreateKeyPair(username: string): Promise<CryptoKeyPair> {
+/**
+ * Returns the stored keypair for this account, generating + persisting a new
+ * one if absent. `isNew` tells the caller whether a fresh keypair was just
+ * generated — if so, its public half isn't published anywhere yet and the
+ * caller is responsible for uploading it, or peers won't be able to derive
+ * a matching shared secret.
+ */
+export async function getOrCreateKeyPair(username: string): Promise<{ keyPair: CryptoKeyPair; isNew: boolean }> {
   const db       = await openDB();
   const existing = await idbGet(db, username);
-  if (existing) return existing;
+  if (existing) return { keyPair: existing, isNew: false };
 
   const kp = await crypto.subtle.generateKey(
     { name: 'ECDH', namedCurve: 'P-256' },
@@ -74,7 +80,7 @@ export async function getOrCreateKeyPair(username: string): Promise<CryptoKeyPai
   );
 
   await idbPut(db, username, kp);
-  return kp;
+  return { keyPair: kp, isNew: true };
 }
 
 /**

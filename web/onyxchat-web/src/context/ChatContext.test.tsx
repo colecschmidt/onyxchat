@@ -247,8 +247,8 @@ describe('E2E encrypted path', () => {
     vi.mocked(keysApi.fetchPublicKey).mockResolvedValue(bobPubKeyB64)
     vi.mocked(messagesApi.fetchMessages).mockResolvedValue({ messages: [], hasMore: false })
 
-    // Alice's local keypair is the real one generated above
-    vi.mocked(cryptoLib.getOrCreateKeyPair).mockResolvedValue(aliceKp)
+    // Alice's local keypair is the real one generated above, already published
+    vi.mocked(cryptoLib.getOrCreateKeyPair).mockResolvedValue({ keyPair: aliceKp, isNew: false })
 
     // Route through real crypto implementations
     vi.mocked(cryptoLib.deriveSharedKey).mockImplementation(realCrypto.deriveSharedKey)

@@ -16,8 +16,8 @@ function setRefreshToken(token: string | null) {
 
 export async function publishKey(username: string): Promise<void> {
   try {
-    const kp     = await getOrCreateKeyPair(username)
-    const pubKey = await exportPublicKey(kp)
+    const { keyPair } = await getOrCreateKeyPair(username)
+    const pubKey = await exportPublicKey(keyPair)
     await uploadPublicKey(pubKey)
   } catch (err) {
     console.warn('[E2E] Could not upload public key:', err)
