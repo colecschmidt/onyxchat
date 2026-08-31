@@ -404,6 +404,13 @@ resource "aws_ecs_service" "app" {
 
   enable_execute_command = true
 
+  # Cap rolling-deploy surge below the default 200%: at max_capacity=6 (ecr.tf)
+  # this bounds concurrent tasks to 9 instead of 12, keeping
+  # 9 * max_open_conns_per_task(8) = 72 comfortably under RDS's ~112 connection
+  # ceiling instead of the 96 the default would allow.
+  deployment_minimum_healthy_percent = 100
+  deployment_maximum_percent         = 150
+
   # Roll back automatically if a new deployment fails health checks
   deployment_circuit_breaker {
     enable   = true
