@@ -42,10 +42,6 @@ output "task_role_arn" {
   value = aws_iam_role.task_role.arn
 }
 
-output "ssm_db_dsn_param_name" {
-  value = aws_ssm_parameter.db_dsn.name
-}
-
 output "redis_endpoint" {
   value       = "${aws_elasticache_replication_group.redis.primary_endpoint_address}:6379"
   description = "ElastiCache Redis endpoint passed to ECS as SM_REDIS_ADDR"

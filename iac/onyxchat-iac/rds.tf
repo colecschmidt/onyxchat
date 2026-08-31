@@ -47,9 +47,3 @@ resource "aws_db_instance" "postgres" {
     ]
   }
 }
-
-# Read the RDS-managed password from Secrets Manager so Terraform can
-# keep the SSM DSN parameter in sync automatically.
-data "aws_secretsmanager_secret_version" "rds_master" {
-  secret_id = aws_db_instance.postgres.master_user_secret[0].secret_arn
-}

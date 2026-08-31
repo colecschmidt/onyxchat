@@ -46,11 +46,6 @@ variable "jwt_secret_ssm_param" {
   default = "/onyxchat/prod/JWT_SECRET"
 }
 
-variable "db_dsn_ssm_param" {
-  type    = string
-  default = "/onyxchat/prod/SM_DB_DSN"
-}
-
 variable "alert_email" {
   type        = string
   description = "Email address for CloudWatch alarm notifications."

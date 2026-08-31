@@ -9,22 +9,6 @@ data "aws_subnets" "default" {
   }
 }
 
-# Construct the DSN from the RDS-managed Secrets Manager secret so this
-# parameter stays in sync automatically on every terraform apply.
-resource "aws_ssm_parameter" "db_dsn" {
-  name  = var.db_dsn_ssm_param
-  type  = "SecureString"
-  value = "postgres://${local.rds_creds.username}:${urlencode(local.rds_creds.password)}@${aws_db_instance.postgres.address}:${aws_db_instance.postgres.port}/${var.db_name}"
-}
-
-data "aws_ssm_parameter" "db_host" {
-  name = "/onyxchat/prod/SM_DB_HOST"
-}
-
-data "aws_ssm_parameter" "db_port" {
-  name = "/onyxchat/prod/SM_DB_PORT"
-}
-
 data "aws_ssm_parameter" "jwt_secret" {
   name = "/onyxchat/prod/JWT_SECRET"
 }
@@ -82,7 +66,6 @@ resource "aws_iam_policy" "task_ssm_read" {
         Effect = "Allow"
         Action = ["ssm:GetParameter", "ssm:GetParameters"]
         Resource = concat([
-          aws_ssm_parameter.db_dsn.arn,
           data.aws_ssm_parameter.jwt_secret.arn,
           data.aws_ssm_parameter.redis_auth_token.arn,
           data.aws_ssm_parameter.internal_service_secret.arn,
@@ -102,6 +85,27 @@ resource "aws_iam_role_policy_attachment" "task_exec_ssm_attach" {
 resource "aws_iam_role" "task_role" {
   name               = "${var.app_name}-task-role"
   assume_role_policy = data.aws_iam_policy_document.ecs_task_assume_role.json
+}
+
+# Lets the app fetch the current DB password directly from the RDS-managed
+# secret at boot, instead of trusting a Terraform-frozen copy — the copy
+# goes stale between auto-rotations (Secrets Manager rotates on its own
+# schedule; nothing re-applies Terraform when it does) and new tasks that
+# launch during that window fail to authenticate. See CLAUDE.md/db.go.
+resource "aws_iam_role_policy" "task_db_secret_read" {
+  name = "${var.app_name}-task-db-secret-read"
+  role = aws_iam_role.task_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["secretsmanager:GetSecretValue"]
+        Resource = aws_db_instance.postgres.master_user_secret[0].secret_arn
+      }
+    ]
+  })
 }
 
 # SSM permissions required for ECS Exec (allows `aws ecs execute-command`)
@@ -363,7 +367,6 @@ resource "aws_ecs_task_definition" "app" {
       environment = local.app_env
 
       secrets = concat([
-        { name = "SM_DB_DSN", valueFrom = aws_ssm_parameter.db_dsn.arn },
         { name = "JWT_SECRET", valueFrom = data.aws_ssm_parameter.jwt_secret.arn },
         { name = "SM_REDIS_AUTH_TOKEN", valueFrom = data.aws_ssm_parameter.redis_auth_token.arn },
         { name = "INTERNAL_SERVICE_SECRET", valueFrom = data.aws_ssm_parameter.internal_service_secret.arn },
@@ -432,8 +435,7 @@ resource "aws_ecs_service" "app" {
 # ── Locals ─────────────────────────────────────────────────────────────────────
 
 locals {
-  subnets   = data.aws_subnets.default.ids
-  rds_creds = jsondecode(data.aws_secretsmanager_secret_version.rds_master.secret_string)
+  subnets = data.aws_subnets.default.ids
 
   app_env = [
     { name = "SM_ENV", value = "prod" },
@@ -441,6 +443,12 @@ locals {
     { name = "SM_REDIS_ADDR", value = "${aws_elasticache_replication_group.redis.primary_endpoint_address}:6379" },
     { name = "SM_ALLOWED_ORIGINS", value = "https://onyxchat.dev,https://www.onyxchat.dev" },
     { name = "SM_ADMIN_USERNAME", value = var.admin_username },
+    # DB password is fetched live from Secrets Manager at boot (db.go) instead
+    # of a frozen SSM snapshot — these are connection coordinates, not secrets.
+    { name = "SM_DB_HOST", value = aws_db_instance.postgres.address },
+    { name = "SM_DB_PORT", value = tostring(aws_db_instance.postgres.port) },
+    { name = "SM_DB_NAME", value = var.db_name },
+    { name = "SM_DB_SECRET_ARN", value = aws_db_instance.postgres.master_user_secret[0].secret_arn },
   ]
 }
 
