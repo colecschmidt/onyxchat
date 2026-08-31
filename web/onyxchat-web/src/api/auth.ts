@@ -14,9 +14,9 @@ function setRefreshToken(token: string | null) {
   else localStorage.removeItem(REFRESH_TOKEN_KEY)
 }
 
-export async function publishKey(): Promise<void> {
+export async function publishKey(username: string): Promise<void> {
   try {
-    const kp     = await getOrCreateKeyPair()
+    const kp     = await getOrCreateKeyPair(username)
     const pubKey = await exportPublicKey(kp)
     await uploadPublicKey(pubKey)
   } catch (err) {
@@ -28,7 +28,7 @@ export async function login(username: string, password: string): Promise<AuthRes
   const data = await api.post<AuthResponse>('/api/v1/login', { username, password })
   setToken(data.token)
   setRefreshToken(data.refresh_token)
-  await publishKey()
+  await publishKey(data.username)
   return data
 }
 
@@ -36,7 +36,7 @@ export async function register(username: string, password: string, inviteCode: s
   const data = await api.post<AuthResponse>('/api/v1/register', { username, password, invite_code: inviteCode })
   setToken(data.token)
   setRefreshToken(data.refresh_token)
-  await publishKey()
+  await publishKey(data.username)
   return data
 }
 
@@ -78,10 +78,18 @@ export async function logout(): Promise<void> {
       // best-effort — still clear local state
     }
   }
+  const storedUser = localStorage.getItem('user')
   setToken(null)
   setRefreshToken(null)
   localStorage.removeItem('user')
-  await clearKeyPair()
+  if (storedUser) {
+    try {
+      const { username } = JSON.parse(storedUser) as { username: string }
+      await clearKeyPair(username)
+    } catch {
+      // malformed 'user' entry — nothing to clear by username
+    }
+  }
 }
 
 export async function changePassword(currentPassword: string, newPassword: string): Promise<void> {

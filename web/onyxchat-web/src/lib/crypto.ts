@@ -11,7 +11,6 @@
 const DB_NAME    = 'onyxchat_e2e';
 const DB_VERSION = 2;
 const STORE      = 'keypairs';
-const KEY_ID     = 'local';
 
 function openDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -27,9 +26,14 @@ function openDB(): Promise<IDBDatabase> {
   });
 }
 
-async function idbGet(db: IDBDatabase): Promise<CryptoKeyPair | null> {
+// Keyed by username, not a single fixed slot: IndexedDB is shared across all
+// tabs of the same origin, so a fixed slot meant two accounts open in two
+// tabs shared one physical keypair — logging out in one tab (which wipes the
+// slot) silently orphaned the other tab's already-published server-side key
+// from its next freshly-generated local keypair, breaking decryption.
+async function idbGet(db: IDBDatabase, username: string): Promise<CryptoKeyPair | null> {
   return new Promise((resolve, reject) => {
-    const req = db.transaction(STORE, 'readonly').objectStore(STORE).get(KEY_ID);
+    const req = db.transaction(STORE, 'readonly').objectStore(STORE).get(username);
     req.onsuccess = () => {
       const r = req.result;
       resolve(r ? { publicKey: r.publicKey, privateKey: r.privateKey } : null);
@@ -38,18 +42,18 @@ async function idbGet(db: IDBDatabase): Promise<CryptoKeyPair | null> {
   });
 }
 
-async function idbPut(db: IDBDatabase, kp: CryptoKeyPair): Promise<void> {
+async function idbPut(db: IDBDatabase, username: string, kp: CryptoKeyPair): Promise<void> {
   return new Promise((resolve, reject) => {
     const req = db.transaction(STORE, 'readwrite').objectStore(STORE)
-      .put({ id: KEY_ID, publicKey: kp.publicKey, privateKey: kp.privateKey });
+      .put({ id: username, publicKey: kp.publicKey, privateKey: kp.privateKey });
     req.onsuccess = () => resolve();
     req.onerror   = () => reject(req.error);
   });
 }
 
-async function idbDelete(db: IDBDatabase): Promise<void> {
+async function idbDelete(db: IDBDatabase, username: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    const req = db.transaction(STORE, 'readwrite').objectStore(STORE).delete(KEY_ID);
+    const req = db.transaction(STORE, 'readwrite').objectStore(STORE).delete(username);
     req.onsuccess = () => resolve();
     req.onerror   = () => reject(req.error);
   });
@@ -57,10 +61,10 @@ async function idbDelete(db: IDBDatabase): Promise<void> {
 
 // ─── Key lifecycle ────────────────────────────────────────────────────────────
 
-/** Returns the stored keypair, generating + persisting a new one if absent. */
-export async function getOrCreateKeyPair(): Promise<CryptoKeyPair> {
+/** Returns the stored keypair for this account, generating + persisting a new one if absent. */
+export async function getOrCreateKeyPair(username: string): Promise<CryptoKeyPair> {
   const db       = await openDB();
-  const existing = await idbGet(db);
+  const existing = await idbGet(db, username);
   if (existing) return existing;
 
   const kp = await crypto.subtle.generateKey(
@@ -69,7 +73,7 @@ export async function getOrCreateKeyPair(): Promise<CryptoKeyPair> {
     ['deriveKey'],
   );
 
-  await idbPut(db, kp);
+  await idbPut(db, username, kp);
   return kp;
 }
 
@@ -82,10 +86,10 @@ export async function exportPublicKey(kp: CryptoKeyPair): Promise<string> {
   return bufToBase64(raw);
 }
 
-/** Wipes the stored keypair from IDB. Call on logout. */
-export async function clearKeyPair(): Promise<void> {
+/** Wipes this account's stored keypair from IDB. Call on logout. */
+export async function clearKeyPair(username: string): Promise<void> {
   const db = await openDB();
-  await idbDelete(db);
+  await idbDelete(db, username);
 }
 
 // ─── ECDH key agreement ───────────────────────────────────────────────────────

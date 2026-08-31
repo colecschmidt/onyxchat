@@ -33,12 +33,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (getToken() || !getRefreshToken()) return
 
     let mounted = true
+    // Read directly from storage rather than closing over the `user` state
+    // value — this only needs the value as of mount, not on every change.
+    const stored = localStorage.getItem('user')
+    const storedUser: User | null = stored ? JSON.parse(stored) : null
 
     apiRefresh()
       .then(async newToken => {
         if (!mounted) return
-        if (!newToken) { setUser(null); return }
-        await publishKey()
+        if (!newToken || !storedUser) { setUser(null); return }
+        await publishKey(storedUser.username)
       })
       .catch(() => {
         if (!mounted) return

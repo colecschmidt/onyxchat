@@ -74,6 +74,8 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   // ── Shared key helper ──────────────────────────────────────────────────────
 
   const getSharedKey = useCallback(async (peerUsername: string): Promise<CryptoKey | null> => {
+    if (!user) return null
+
     const theirPubKeyB64 = await fetchPublicKey(peerUsername)
     if (!theirPubKeyB64) return null
 
@@ -82,11 +84,11 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     if (cached && cached.pubKey === theirPubKeyB64) return cached.key
 
     // Derive fresh shared key (peer rotated their keypair, or first time)
-    const kp        = await getOrCreateKeyPair()
+    const kp        = await getOrCreateKeyPair(user.username)
     const sharedKey = await deriveSharedKey(kp.privateKey, theirPubKeyB64)
     sharedKeyCache.current.set(peerUsername, { key: sharedKey, pubKey: theirPubKeyB64 })
     return sharedKey
-  }, [])
+  }, [user])
 
   // ── Decrypt a single incoming message in-place ─────────────────────────────
 
