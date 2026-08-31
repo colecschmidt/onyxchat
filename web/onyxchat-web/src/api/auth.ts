@@ -40,7 +40,13 @@ export async function register(username: string, password: string, inviteCode: s
   return data
 }
 
-export async function refresh(): Promise<string | null> {
+// The backend rotates refresh tokens on every use and immediately deletes
+// the old one — no grace window. refresh_token lives in localStorage, which
+// is shared across tabs, so two tabs refreshing at once race: the loser's
+// token has already been deleted by the winner and gets a hard 401. A
+// cross-tab lock serializes refreshes so the loser waits, then re-reads the
+// (now current) token instead of retrying with the stale one it started with.
+async function doRefresh(): Promise<string | null> {
   const rt = getRefreshToken()
   if (!rt) return null
   try {
@@ -49,9 +55,18 @@ export async function refresh(): Promise<string | null> {
     setRefreshToken(data.refresh_token)
     return data.token
   } catch {
-    setRefreshToken(null)
+    // Only clear it if it's still the token we tried — don't wipe a
+    // session another tab may have just rotated to successfully.
+    if (getRefreshToken() === rt) setRefreshToken(null)
     return null
   }
+}
+
+export async function refresh(): Promise<string | null> {
+  // Web Locks isn't implemented everywhere (e.g. jsdom in tests) — degrade
+  // to the unlocked (racy) path there instead of throwing.
+  if (!('locks' in navigator)) return doRefresh()
+  return navigator.locks.request('onyxchat-refresh-token', doRefresh)
 }
 
 export async function logout(): Promise<void> {
