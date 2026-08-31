@@ -25,11 +25,11 @@ func ReadyHandler(userStore userStorer) http.HandlerFunc {
 		defer cancel()
 
 		if err := userStore.Ping(ctx); err != nil {
-				log.Printf("readiness ping failed: %v", err)
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusServiceUnavailable)
-				_, _ = w.Write([]byte(`{"status":"not_ready"}`))
-				return
+			log.Printf("readiness ping failed: %v", err)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"status":"not_ready"}`))
+			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
