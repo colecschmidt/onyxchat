@@ -1,13 +1,15 @@
 # onyxchat — Distributed E2EE Messaging System (19K msgs/min)
 
-> A production-grade, end-to-end encrypted messaging platform built from scratch.  
+> A production-grade, end-to-end encrypted messaging platform.
 > Live at **[onyxchat.dev](https://onyxchat.dev)**
 
 ---
 
 ## What is this?
 
-OnyxChat is a real-time encrypted chat application I designed and built end-to-end — from cryptography and WebSocket infrastructure to cloud deployment and CI/CD. It is not a tutorial project. Every component is running in production.
+OnyxChat is a real-time encrypted chat application covering cryptography, WebSocket infrastructure, cloud deployment, and CI/CD. Every component described below is running in production.
+
+I built this with heavy use of AI-assisted development (Claude Code) — I drove the architecture decisions, debugged production issues, and made the design tradeoffs described throughout this README. I can walk through and defend every piece of this system: how the encryption is derived, why the pub/sub fanout is structured the way it is, and where the tradeoffs and limitations are.
 
 Messages are encrypted in the browser before they leave your device. The server stores and relays ciphertext. Even I cannot read your messages.
 
@@ -43,7 +45,9 @@ Client (React PWA)
                    - distributed tracing (OTel → Tempo)
 ```
 
-Two API tasks run behind a load balancer. Redis pub/sub fans out WebSocket messages and events across instances. The notification service runs as a separate process, authenticates to the API server via a shared secret, and delivers offline push notifications. Secrets live in SSM Parameter Store — never in environment variables or code.
+Two API tasks run behind a load balancer. Each task publishes new-message events to two global Redis channels (`message.created`, `message.deleted`); every task subscribes to both and re-fetches the full message from Postgres before delivering it over any WebSocket connections it happens to be holding for the relevant users. This means no task needs to know in advance which task holds which user's connection — every task hears every event and only acts on the ones it can actually deliver locally. The notification service runs as a separate process, authenticates to the API server via a shared secret, and delivers offline push notifications. Secrets live in SSM Parameter Store — never in environment variables or code.
+
+**Known limitation:** every task currently processes every message event, even ones with no relevant local connections. This is fine at current scale (2 tasks) but wouldn't scale cleanly to hundreds of instances — the standard fix would be per-user or per-shard Redis channels instead of two global ones.
 
 ---
 
@@ -174,6 +178,10 @@ npm run dev
 
 ---
 
+## Development Approach
+
+This project was built with heavy use of AI-assisted development (Claude Code). My role was directing architecture decisions, reviewing and debugging the generated code, tracing through production issues, and making the tradeoffs documented throughout this README. I'm being upfront about this because I think it's a more accurate — and honestly more useful — description of how the project came together than pretending otherwise, and I'd rather be asked about the process directly than have it come up as a surprise.
+
 ## What I Learned Building This
 
 - Implementing cryptographic protocols correctly is harder than using a library — understanding ECDH key derivation, IV uniqueness, and GCM authentication tags at the byte level
@@ -181,6 +189,7 @@ npm run dev
 - Production debugging: chasing schema drift between code and a live RDS instance column by column
 - OIDC-based CI/CD is strictly better than storing AWS credentials as GitHub secrets
 - Cloudflare's proxy must be bypassed for WebSocket connections to an ALB — TLS termination cannot be double-proxied
+- The global-channel pub/sub design here is a simplification that wouldn't survive real scale — a good example of a decision that's right for the current size of the system and wrong for a much bigger one
 
 ---
 
