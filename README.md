@@ -7,9 +7,7 @@
 
 ## What is this?
 
-OnyxChat is a real-time encrypted chat application covering cryptography, WebSocket infrastructure, cloud deployment, and CI/CD. Every component described below is running in production.
-
-I built this with heavy use of AI-assisted development (Claude Code) — I drove the architecture decisions, debugged production issues, and made the design tradeoffs described throughout this README. I can walk through and defend every piece of this system: how the encryption is derived, why the pub/sub fanout is structured the way it is, and where the tradeoffs and limitations are.
+OnyxChat is a real-time encrypted chat application covering cryptography, WebSocket infrastructure, cloud deployment, and CI/CD. Every component described below is running in production. Built using Claude Code for implementation, with me driving the architecture, debugging, and infrastructure decisions throughout.
 
 Messages are encrypted in the browser before they leave your device. The server stores and relays ciphertext. Even I cannot read your messages.
 
