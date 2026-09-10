@@ -177,6 +177,10 @@ func main() {
 	if env == "prod" && len(allowedOrigins) == 0 {
 		logger.Fatal("SM_ALLOWED_ORIGINS is required in prod")
 	}
+	if env != "prod" && len(allowedOrigins) == 0 {
+		allowedOrigins = []string{"http://localhost:5173"}
+		logger.Warn("SM_ALLOWED_ORIGINS not set; using insecure dev default", zap.Strings("allowed_origins", allowedOrigins))
+	}
 
 	router := serverhttp.NewRouter(
 		userStore,
