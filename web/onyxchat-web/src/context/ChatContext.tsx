@@ -86,7 +86,23 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 
     // Derive fresh shared key (peer rotated their keypair, or first time)
     const { keyPair, isNew } = await getOrCreateKeyPair(user.username)
-    if (isNew) {
+    let needsUpload = isNew
+    if (!needsUpload) {
+      // Even when we already have a local keypair, it may have silently
+      // drifted from what the server has on file (e.g. a stale/duplicate
+      // browser session overwrote our IDB entry, or a previous upload
+      // failed). Without this check that state never self-heals — every
+      // peer keeps deriving against our old public key forever, with no
+      // error surfaced anywhere except "Unable to decrypt" on their side.
+      try {
+        const ourServerPubKey = await fetchPublicKey(user.username)
+        const ourLocalPubKey = await exportPublicKey(keyPair)
+        if (ourServerPubKey !== ourLocalPubKey) needsUpload = true
+      } catch (err) {
+        console.warn('[E2E] Could not verify own key against server:', err)
+      }
+    }
+    if (needsUpload) {
       // A keypair generated here has never been published — without this,
       // peers keep deriving against our old (or no) public key forever.
       try {
