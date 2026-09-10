@@ -100,6 +100,7 @@ export function AdminPanel() {
   const [users, setUsers] = useState<User[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [forbidden, setForbidden] = useState(false)
   const [success, setSuccess] = useState('')
   const [newCode, setNewCode] = useState('')
   const [prefix, setPrefix] = useState('ONYX-ALPHA')
@@ -117,7 +118,9 @@ export function AdminPanel() {
       setCodes(Array.isArray(c) ? c : [])
       setUsers(Array.isArray(u) ? u : [])
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load data')
+      const msg = e instanceof Error ? e.message : 'Failed to load data'
+      if (msg.toLowerCase().includes('forbidden')) setForbidden(true)
+      else setError(msg)
     } finally {
       setLoading(false)
     }
@@ -135,7 +138,9 @@ export function AdminPanel() {
       showSuccess(`${code} created!`)
       loadData()
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to create invite')
+      const msg = e instanceof Error ? e.message : 'Failed to load data'
+      if (msg.toLowerCase().includes('forbidden')) setForbidden(true)
+      else setError(msg)
     } finally {
       setGenerating(false)
     }
@@ -161,7 +166,7 @@ export function AdminPanel() {
   const used      = codes.filter(c => codeStatus(c) === 'used').length
 
   // ── Guard ───────────────────────────────────────────────────
-  if (user?.username !== 'ashenspellbook') {
+  if (forbidden) {
     return (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: 'var(--bg)' }}>
         <div style={{ textAlign: 'center', color: 'var(--text-mute)' }}>
@@ -224,7 +229,7 @@ export function AdminPanel() {
             fontSize: 13, color: 'var(--text-dim)',
           }}>
             <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--green)', boxShadow: '0 0 6px var(--green)', display: 'inline-block' }} />
-            {user.username}
+            {user?.username}
           </div>
           <button onClick={logout} style={{
             background: 'none', border: '1px solid var(--border-2)',
