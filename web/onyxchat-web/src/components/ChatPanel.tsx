@@ -1,13 +1,9 @@
-// components/ChatPanel.tsx — replaces existing file
-// Changes from original: lock badge in header when peer has E2E key,
-// 🔒 icon on individual encrypted messages. All logic stays in context.
-
+// components/ChatPanel.tsx
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { useChat }  from '../context/ChatContext'
 import { useAuth }  from '../context/AuthContext'
 import { fetchPublicKey } from '../api/keys'
-
-const initials = (name: string) => name.slice(0, 2).toUpperCase()
+import { Avatar, LockIcon, SendIcon, Logo } from './ui'
 
 function formatTime(iso: string) {
   const d = new Date(iso)
@@ -27,7 +23,6 @@ export function ChatPanel() {
 
   const msgs = activePeer ? (messages[activePeer.username] ?? []) : []
 
-  // Check whether the active peer has uploaded an E2E key
   useEffect(() => {
     if (!activePeer) { setPeerHasKey(false); return }
     fetchPublicKey(activePeer.username).then(k => setPeerHasKey(!!k))
@@ -65,11 +60,9 @@ export function ChatPanel() {
     return (
       <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg)' }}>
         <div style={{ textAlign: 'center', color: 'var(--text-mute)' }}>
-          <svg width="64" height="64" viewBox="0 0 64 64" fill="none" style={{ margin: '0 auto 16px', display: 'block', opacity: 0.2 }}>
-            <circle cx="32" cy="32" r="20" stroke="#2563eb" strokeWidth="3"/>
-            <circle cx="32" cy="32" r="10" fill="#2563eb" opacity="0.5"/>
-            <circle cx="32" cy="32" r="4" fill="#2563eb"/>
-          </svg>
+          <div style={{ margin: '0 auto 16px', display: 'flex', justifyContent: 'center', opacity: 0.6 }}>
+            <Logo size={48} />
+          </div>
           <div style={{ fontSize: '18px', fontWeight: 600, color: 'var(--text)', marginBottom: '8px' }}>OnyxChat</div>
           <div style={{ fontSize: '13px', lineHeight: 1.6 }}>Select a contact to start a conversation.</div>
         </div>
@@ -84,21 +77,13 @@ export function ChatPanel() {
         height: '56px', display: 'flex', alignItems: 'center',
         padding: '0 16px', borderBottom: '1px solid var(--border)', gap: '10px',
       }}>
-        <div style={{
-          width: '32px', height: '32px', borderRadius: '50%',
-          background: 'var(--surface)', border: '1px solid var(--border-2)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontSize: '12px', fontWeight: 600, color: 'var(--text-dim)',
-        }}>
-          {initials(activePeer.username)}
-        </div>
+        <Avatar name={activePeer.username} size={32} />
         <div style={{ flex: 1 }}>
           <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text)', display: 'flex', alignItems: 'center', gap: '6px' }}>
             {activePeer.username}
-            {/* Lock badge — shown when both sides have E2E keys */}
             {peerHasKey && (
-              <span title="End-to-end encrypted" style={{ fontSize: '11px', color: 'var(--green, #22c55e)' }}>
-                🔒
+              <span title="End-to-end encrypted" style={{ color: 'var(--green)', display: 'flex' }}>
+                <LockIcon size={12} />
               </span>
             )}
           </div>
@@ -125,16 +110,7 @@ export function ChatPanel() {
                 onMouseLeave={() => setHoveredMsg(null)}
                 style={{ display: 'flex', justifyContent: isMe ? 'flex-end' : 'flex-start', gap: '8px', alignItems: 'flex-end', position: 'relative' }}
               >
-                {!isMe && (
-                  <div style={{
-                    width: '26px', height: '26px', borderRadius: '50%',
-                    background: 'var(--surface)', border: '1px solid var(--border-2)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    fontSize: '10px', fontWeight: 600, color: 'var(--text-dim)', flexShrink: 0,
-                  }}>
-                    {initials(activePeer.username)}
-                  </div>
-                )}
+                {!isMe && <Avatar name={activePeer.username} size={26} />}
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: isMe ? 'flex-end' : 'flex-start', maxWidth: 'min(68%, 420px)', gap: '2px' }}>
                   <div
                     onClick={msg.failed ? () => retryMessage(msg.id, msg.body) : undefined}
@@ -143,12 +119,12 @@ export function ChatPanel() {
                       borderRadius: isMe ? '20px 20px 4px 20px' : '20px 20px 20px 4px',
                       fontSize: '13.5px', lineHeight: 1.5, wordBreak: 'break-word', whiteSpace: 'pre-wrap',
                       background: msg.failed
-                        ? 'rgba(239,68,68,0.12)'
-                        : isMe ? 'linear-gradient(145deg, var(--blue), var(--blue-dim))' : 'var(--surface)',
+                        ? 'rgba(226,104,92,0.12)'
+                        : isMe ? 'linear-gradient(145deg, var(--accent), var(--accent-dim))' : 'var(--surface)',
                       border: msg.failed
-                        ? '1px solid rgba(239,68,68,0.4)'
+                        ? '1px solid rgba(226,104,92,0.4)'
                         : isMe ? 'none' : '1px solid var(--border-2)',
-                      color: msg.failed ? 'var(--red, #ef4444)' : isMe ? 'white' : 'var(--text)',
+                      color: msg.failed ? 'var(--red)' : isMe ? 'var(--accent-ink)' : 'var(--text)',
                       opacity: msg.failed ? 0.85 : 1,
                       cursor: msg.failed ? 'pointer' : 'default',
                     }}>
@@ -156,11 +132,11 @@ export function ChatPanel() {
                   </div>
                   <div style={{ fontSize: '10px', fontFamily: 'var(--mono)', color: 'var(--text-mute)', padding: '0 4px', display: 'flex', gap: '4px', alignItems: 'center' }}>
                     {msg.failed ? (
-                      <span style={{ color: 'var(--red, #ef4444)', cursor: 'pointer' }} onClick={() => retryMessage(msg.id, msg.body)}>⚠ Tap to retry</span>
+                      <span style={{ color: 'var(--red)', cursor: 'pointer' }} onClick={() => retryMessage(msg.id, msg.body)}>⚠ Tap to retry</span>
                     ) : (
                       <>
                         {formatTime(msg.createdAt)}
-                        {msg.encrypted && <span title="Encrypted" style={{ opacity: 0.5 }}>🔒</span>}
+                        {msg.encrypted && <span title="Encrypted" style={{ opacity: 0.5, display: 'flex' }}><LockIcon size={9} /></span>}
                       </>
                     )}
                   </div>
@@ -233,15 +209,12 @@ export function ChatPanel() {
           disabled={!input.trim()}
           style={{
             width: '38px', height: '38px', borderRadius: '50%',
-            background: 'var(--blue)', border: 'none', color: 'white',
+            background: 'var(--accent)', border: 'none', color: 'var(--accent-ink)',
             cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
             flexShrink: 0, opacity: input.trim() ? 1 : 0.35,
           }}
         >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-            <line x1="22" y1="2" x2="11" y2="13"/>
-            <polygon points="22 2 15 22 11 13 2 9 22 2"/>
-          </svg>
+          <SendIcon />
         </button>
       </div>
     </div>

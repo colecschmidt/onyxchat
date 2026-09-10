@@ -3,22 +3,27 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-  --bg:        #020617;
-  --bg-2:      #050d1e;
-  --bg-3:      #0a1628;
-  --surface:   #0f1f3d;
-  --border:    #111f3a;
-  --border-2:  #1a2f50;
-  --blue:      #2563eb;
-  --blue-dim:  #1d4ed8;
-  --blue-glow: rgba(37,99,235,0.18);
-  --text:      #e2e8f0;
-  --text-dim:  #94a3b8;
-  --text-mute: #475569;
-  --green:     #22c55e;
-  --red:       #ef4444;
-  --font:      'DM Sans', sans-serif;
-  --mono:      'DM Mono', monospace;
+  /* Warm near-black base — onyx, not generic navy */
+  --bg:          #0c0b0d;
+  --bg-2:        #151317;
+  --bg-3:        #1d1a1e;
+  --surface:     #232025;
+  --border:      #2a262b;
+  --border-2:    #3a343b;
+
+  /* Copper/bronze accent — the "glint in the stone", not SaaS-blue */
+  --accent:      #d99a56;
+  --accent-dim:  #b97f42;
+  --accent-glow: rgba(217,154,86,0.16);
+  --accent-ink:  #1a1208; /* text-on-accent */
+
+  --text:        #efe9e2;
+  --text-dim:    #a39a92;
+  --text-mute:   #5f5850;
+  --green:       #7fbf76;
+  --red:         #e2685c;
+  --font:        'DM Sans', sans-serif;
+  --mono:        'DM Mono', monospace;
 }
 
 html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(--text); font-family: var(--font); font-size: 14px; -webkit-font-smoothing: antialiased; }
