@@ -2,5 +2,5 @@
 
 OnyxChat is a production, end-to-end encrypted messaging platform. All cryptography (ECDH P-256 key exchange, AES-256-GCM message encryption) happens client-side in the browser; the server only ever stores and relays ciphertext and public keys, never plaintext message content.
 
-- Web app: https://onyxchat.dev
-- Source code: https://github.com/colecschmidt/onyxchat
+- [Web app](https://onyxchat.dev)
+- [Source code](https://github.com/colecschmidt/onyxchat)
