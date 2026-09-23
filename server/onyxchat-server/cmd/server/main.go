@@ -76,6 +76,26 @@ func main() {
 		logger.Warn("JWT_SECRET not set; using insecure dev default", zap.String("SM_ENV", env))
 	}
 
+	// TOTP secrets are encrypted at rest (see internal/http/totp_cipher.go).
+	// TOTP_ENC_KEY is read straight from the environment rather than through
+	// store.ResolveSecret, which log.Fatal's when an SSM parameter is missing —
+	// this key is optional, and a deploy that hasn't provisioned one yet must
+	// still boot. Without it the key is derived from JWT_SECRET, which means
+	// rotating JWT_SECRET invalidates every stored TOTP secret; affected users
+	// fall back to a recovery code (those are hashed independently) and re-enroll.
+	// Set TOTP_ENC_KEY to decouple the two.
+	totpKeyMaterial := os.Getenv("TOTP_ENC_KEY")
+	if totpKeyMaterial == "" {
+		totpKeyMaterial = jwtSecret
+		logger.Warn("TOTP_ENC_KEY not set; deriving TOTP encryption key from JWT_SECRET "+
+			"(rotating JWT_SECRET will invalidate enrolled authenticators)",
+			zap.String("SM_ENV", env))
+	}
+	totpCipher, err := serverhttp.NewSecretCipher(totpKeyMaterial)
+	if err != nil {
+		logger.Fatal("failed to initialise TOTP secret cipher", zap.Error(err))
+	}
+
 	// DB
 	db := store.MustOpen()
 	if err := store.RunMigrations(db); err != nil {
@@ -194,6 +214,7 @@ func main() {
 		rdb,
 		adminUsername,
 		serviceSecret,
+		totpCipher,
 	)
 
 	// Server

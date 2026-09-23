@@ -28,6 +28,14 @@ type userStorer interface {
 	AdminResetInvite(code string) error
 	UpdatePassword(userID int64, newHash string) error
 
+	GetTOTPEnrollment(userID int64) (*store.TOTPEnrollment, error)
+	SetPendingTOTPSecret(userID int64, encryptedSecret string) error
+	ConfirmTOTP(userID int64, codeHashes []string) error
+	DisableTOTP(userID int64) error
+	ReplaceRecoveryCodes(userID int64, codeHashes []string) error
+	ConsumeRecoveryCode(userID int64, codeHash string) (bool, error)
+	CountUnusedRecoveryCodes(userID int64) (int, error)
+
 	ListContacts(userID int64) ([]*store.Contact, error)
 	GetContactFollowerIDs(userID int64) ([]int64, error)
 	IsContact(userID, peerID int64) (bool, error)

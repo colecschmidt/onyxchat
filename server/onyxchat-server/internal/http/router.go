@@ -26,6 +26,7 @@ func NewRouter(
 	rdb *redis.Client,
 	adminUsername string,
 	serviceSecret string,
+	totpCipher *SecretCipher,
 ) http.Handler {
 	r := mux.NewRouter()
 
@@ -68,6 +69,14 @@ func NewRouter(
 		),
 	).Methods(http.MethodPost, http.MethodOptions)
 
+	api.Handle("/login/2fa",
+		LoginIPRateLimit(ipLimiter)(
+			MaxBodyBytes(4096)(
+				http.HandlerFunc(LoginTwoFactorHandler(userStore, jwtMgr, totpCipher, rdb, log)),
+			),
+		),
+	).Methods(http.MethodPost, http.MethodOptions)
+
 	api.Handle("/refresh",
 		MaxBodyBytes(1<<20)(http.HandlerFunc(RefreshHandler(userStore, jwtMgr, rdb, log))),
 	).Methods(http.MethodPost, http.MethodOptions)
@@ -86,6 +95,25 @@ func NewRouter(
 	protected.Handle("/users/me/password",
 		MaxBodyBytes(1<<20)(http.HandlerFunc(ChangePasswordHandler(userStore))),
 	).Methods(http.MethodPatch, http.MethodOptions)
+
+	protected.HandleFunc("/users/me/2fa", TwoFactorStatusHandler(userStore, log)).
+		Methods(http.MethodGet, http.MethodOptions)
+
+	protected.Handle("/users/me/2fa",
+		MaxBodyBytes(4096)(http.HandlerFunc(TwoFactorDisableHandler(userStore, totpCipher, rdb, log))),
+	).Methods(http.MethodDelete, http.MethodOptions)
+
+	protected.Handle("/users/me/2fa/setup",
+		MaxBodyBytes(4096)(http.HandlerFunc(TwoFactorSetupHandler(userStore, totpCipher, log))),
+	).Methods(http.MethodPost, http.MethodOptions)
+
+	protected.Handle("/users/me/2fa/confirm",
+		MaxBodyBytes(4096)(http.HandlerFunc(TwoFactorConfirmHandler(userStore, totpCipher, rdb, log))),
+	).Methods(http.MethodPost, http.MethodOptions)
+
+	protected.Handle("/users/me/2fa/recovery-codes",
+		MaxBodyBytes(4096)(http.HandlerFunc(TwoFactorRecoveryCodesHandler(userStore, totpCipher, rdb, log))),
+	).Methods(http.MethodPost, http.MethodOptions)
 
 	protected.Handle("/messages",
 		MaxBodyBytes(1<<20)(http.HandlerFunc(SendMessageHandler(userStore, msgStore, hub, publisher, log))),

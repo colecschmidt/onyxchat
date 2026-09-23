@@ -80,6 +80,24 @@ Standard `terraform plan`/`apply` from that directory. Deploys are otherwise dri
 
 Handlers depend on narrow interfaces (`userStorer`, `messageStorer` in `stores_interfaces.go`), not the concrete `*store.UserStore`/`*store.MessageStore` — this is what lets `internal/http` tests fake the store without a real DB, while `internal/store` tests run against real Postgres (see Commands above).
 
+### Authentication and two-factor
+
+Login is two-legged whenever the account has a second factor. `POST /api/v1/login` checks the password and then branches: without 2FA it returns the usual `{id, username, token, refresh_token}`; with 2FA it returns `{mfa_required: true, mfa_token}` and **no session**, and the client finishes at `POST /api/v1/login/2fa` with that token plus a code. `issueSession` in `auth_handlers.go` is the single place a token pair is minted — register, plain login, and the second-factor step all go through it, so they can't drift apart. Refresh tokens are only ever issued downstream of a verified factor, so `/api/v1/refresh` deliberately does not re-challenge.
+
+2FA is TOTP (RFC 6238, 30s period, ±1 step skew) and strictly opt-in per user; there is no email or phone column anywhere in the schema, which is also why there's no email-based recovery path — single-use recovery codes are it. Enrollment is a two-step commit: `POST /users/me/2fa/setup` (password re-auth) stores a *pending* secret and returns the QR, and only `POST /users/me/2fa/confirm` — which proves the authenticator holds that secret — sets `users.totp_enabled`. An abandoned setup therefore can't lock anyone out. `totp_secret` present + `totp_enabled = false` is exactly that pending state.
+
+Three things in `twofactor.go` are load-bearing and easy to undo by accident:
+
+- **Secrets are encrypted at rest** (`totp_cipher.go`, AES-256-GCM). A TOTP secret is a bearer credential — it can't be hashed like a password, since the server has to read it back — so a DB-only compromise shouldn't hand over everyone's second factor. The key comes from `TOTP_ENC_KEY`, read via plain `os.Getenv` rather than `store.ResolveSecret` (which `log.Fatal`s on a missing SSM parameter, and this key is optional). Unset, it is HKDF-derived from `JWT_SECRET` — which means **rotating `JWT_SECRET` invalidates every enrolled authenticator**; affected users fall back to a recovery code and re-enroll. Set `TOTP_ENC_KEY` to decouple the two.
+- **Codes are burned after use.** A TOTP code stays valid for the full 90s window, so `verifyTOTP` does a Redis `SETNX` on `mfa:used:<uid>:<code>` and rejects a repeat. This fails *closed* — if Redis is unavailable the code is rejected rather than accepted unverified.
+- **Attempts are budgeted per challenge, not per username.** `mfa:chal:<token>` (5min TTL) carries the half-finished login and `mfa:att:<token>` counts guesses; five wrong codes destroy the challenge, so an attacker has to re-prove the password to get five more tries at six digits.
+
+Recovery codes (`recovery_codes` table) are 80-bit random values stored as a plain SHA-256 of the normalized code — not bcrypt. They come from `crypto/rand`, so there is no dictionary to stretch against, and a digest keeps verification to one indexed lookup instead of N bcrypt comparisons per login. `ConsumeRecoveryCode`'s `UPDATE ... WHERE used_at IS NULL` is the whole concurrency story: two logins racing on one code, exactly one wins.
+
+Anywhere a code is checked, `verifySecondFactor` accepts a TOTP code *or* a recovery code in the same field and returns one indistinguishable error for every failure mode, so responses can't be used to tell "wrong code" from "already used".
+
+On the web client, `/api/v1/login/2fa` is in `NO_REFRESH_RETRY_PATHS` (`api/client.ts`): a 401 there means "wrong code", and the generic refresh-and-retry would silently spend a second attempt from that small budget on one code the user typed once.
+
 ### WebSocket + realtime fanout
 
 Auth never touches the WS URL. Flow: `POST /api/v1/ws/ticket` (JWT-authed) stores a one-time ticket in Redis with a 30s TTL → client opens `GET /api/v1/ws?ticket=...` → server does `GETDEL` on the ticket → connection upgrades. See `ws_ticket.go` / `ws_auth_middleware.go` / `ws.go`.

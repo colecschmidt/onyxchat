@@ -1,7 +1,7 @@
 import { api, setToken } from './client'
 import { getOrCreateKeyPair, exportPublicKey, clearKeyPair } from '../lib/crypto'
 import { uploadPublicKey } from './keys'
-import type { AuthResponse } from '../types'
+import type { AuthResponse, LoginResponse, LoginResult } from '../types'
 
 const REFRESH_TOKEN_KEY = 'refresh_token'
 
@@ -24,20 +24,42 @@ export async function publishKey(username: string): Promise<void> {
   }
 }
 
-export async function login(username: string, password: string): Promise<AuthResponse> {
-  const data = await api.post<AuthResponse>('/api/v1/login', { username, password })
+// startSession installs a freshly issued token pair and publishes the E2E
+// public key. Every path that ends in a logged-in user goes through here.
+async function startSession(data: AuthResponse): Promise<AuthResponse> {
   setToken(data.token)
   setRefreshToken(data.refresh_token)
   await publishKey(data.username)
   return data
 }
 
+// login resolves to one of two outcomes: a live session, or a challenge that
+// has to be answered by completeTwoFactorLogin. The caller must handle both —
+// on the 'mfa_required' branch no token has been stored and the user is not
+// signed in yet.
+export async function login(username: string, password: string): Promise<LoginResult> {
+  const data = await api.post<LoginResponse>('/api/v1/login', { username, password })
+
+  if (data.mfa_required && data.mfa_token) {
+    return { status: 'mfa_required', mfaToken: data.mfa_token }
+  }
+
+  return { status: 'ok', auth: await startSession(data as AuthResponse) }
+}
+
+// completeTwoFactorLogin answers a challenge with either a TOTP code or a
+// recovery code — the server accepts both in the same field.
+export async function completeTwoFactorLogin(mfaToken: string, code: string): Promise<AuthResponse> {
+  const data = await api.post<AuthResponse>('/api/v1/login/2fa', {
+    mfa_token: mfaToken,
+    code: code.trim(),
+  })
+  return startSession(data)
+}
+
 export async function register(username: string, password: string, inviteCode: string) {
   const data = await api.post<AuthResponse>('/api/v1/register', { username, password, invite_code: inviteCode })
-  setToken(data.token)
-  setRefreshToken(data.refresh_token)
-  await publishKey(data.username)
-  return data
+  return startSession(data)
 }
 
 // The backend rotates refresh tokens on every use and immediately deletes

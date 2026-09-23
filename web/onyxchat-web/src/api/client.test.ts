@@ -125,6 +125,15 @@ describe('401 handling', () => {
     expect(mockFetch).toHaveBeenCalledOnce()
   })
 
+  // A 401 here means "wrong code". Retrying it after a token refresh would
+  // spend a second attempt from the challenge's budget on one typed code.
+  it('does NOT retry 401 on /api/v1/login/2fa', async () => {
+    setToken('still-valid')
+    mockFetch.mockResolvedValueOnce(textResponse('invalid verification code', 401))
+    await expect(api.post('/api/v1/login/2fa', {})).rejects.toThrow('invalid verification code')
+    expect(mockFetch).toHaveBeenCalledOnce()
+  })
+
   it('does NOT retry 401 on /api/v1/refresh', async () => {
     mockFetch.mockResolvedValueOnce(textResponse('Unauthorized', 401))
     await expect(api.post('/api/v1/refresh', {})).rejects.toThrow()

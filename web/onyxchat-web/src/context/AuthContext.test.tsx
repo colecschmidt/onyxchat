@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { useEffect } from 'react'
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { render, screen, act, cleanup } from '@testing-library/react'
 import { AuthProvider, useAuth } from './AuthContext'
@@ -11,6 +12,7 @@ vi.mock('../api/auth', () => ({
   login:           vi.fn(),
   logout:          vi.fn(),
   register:        vi.fn(),
+  completeTwoFactorLogin: vi.fn(),
 }))
 vi.mock('../api/client', () => ({
   getToken:  vi.fn(),
@@ -123,5 +125,125 @@ describe('AuthContext – mount-time session refresh', () => {
     // Resolving after unmount must not throw or trigger a React warning.
     // Without the mounted guard this would call setUser on a dead component.
     await act(async () => { resolveRefresh('late-token') })
+  })
+})
+
+// ─────────────────────────────────────────────────────────────
+// Two-factor challenges
+// ─────────────────────────────────────────────────────────────
+
+// Exposes the pieces of the context the challenge flow touches, so a test can
+// drive login/completeTwoFactor and read back what the provider decided.
+// The context is published to the test from an effect rather than during
+// render — writing to an outer binding mid-render is what
+// react-hooks/immutability exists to catch. Every act() in these tests flushes
+// effects, so the handle is current by the time a test reads it.
+const probeRef: { current?: ReturnType<typeof useAuth> } = {}
+const auth = () => probeRef.current!
+
+function ChallengeProbe() {
+  const ctx = useAuth()
+  useEffect(() => { probeRef.current = ctx })
+  return (
+    <div>
+      <span data-testid="user">{ctx.user?.username ?? 'logged-out'}</span>
+      <span data-testid="mfa">{String(ctx.mfaRequired)}</span>
+    </div>
+  )
+}
+
+describe('AuthContext – two-factor challenge', () => {
+  afterEach(() => cleanup())
+
+  beforeEach(() => {
+    localStorage.clear()
+    vi.clearAllMocks()
+    // No stored session, so the mount-time refresh effect stays out of the way.
+    vi.mocked(clientApi.getToken).mockReturnValue(null)
+    vi.mocked(authApi.getRefreshToken).mockReturnValue(null)
+  })
+
+  async function mount() {
+    await act(async () => {
+      render(<AuthProvider><ChallengeProbe /></AuthProvider>)
+    })
+  }
+
+  it('signs in directly when the account has no second factor', async () => {
+    vi.mocked(authApi.login).mockResolvedValue({
+      status: 'ok',
+      auth: { id: 1, username: 'alice', token: 't', refresh_token: 'rt' },
+    })
+    await mount()
+
+    let result!: { mfaRequired: boolean }
+    await act(async () => { result = await auth().login('alice', 'pw') })
+
+    expect(result.mfaRequired).toBe(false)
+    expect(screen.getByTestId('user').textContent).toBe('alice')
+    expect(screen.getByTestId('mfa').textContent).toBe('false')
+  })
+
+  it('does not sign the user in when a challenge is returned', async () => {
+    vi.mocked(authApi.login).mockResolvedValue({ status: 'mfa_required', mfaToken: 'chal-1' })
+    await mount()
+
+    let result!: { mfaRequired: boolean }
+    await act(async () => { result = await auth().login('alice', 'pw') })
+
+    expect(result.mfaRequired).toBe(true)
+    expect(screen.getByTestId('mfa').textContent).toBe('true')
+    // The password alone must not produce a session.
+    expect(screen.getByTestId('user').textContent).toBe('logged-out')
+    expect(localStorage.getItem('user')).toBeNull()
+  })
+
+  it('completes the sign-in with a verified code', async () => {
+    vi.mocked(authApi.login).mockResolvedValue({ status: 'mfa_required', mfaToken: 'chal-1' })
+    vi.mocked(authApi.completeTwoFactorLogin).mockResolvedValue({
+      id: 1, username: 'alice', token: 't', refresh_token: 'rt',
+    })
+    await mount()
+
+    await act(async () => { await auth().login('alice', 'pw') })
+    await act(async () => { await auth().completeTwoFactor('424242') })
+
+    expect(authApi.completeTwoFactorLogin).toHaveBeenCalledWith('chal-1', '424242')
+    expect(screen.getByTestId('user').textContent).toBe('alice')
+    expect(screen.getByTestId('mfa').textContent).toBe('false')
+  })
+
+  it('keeps the challenge open when the code is rejected', async () => {
+    vi.mocked(authApi.login).mockResolvedValue({ status: 'mfa_required', mfaToken: 'chal-1' })
+    vi.mocked(authApi.completeTwoFactorLogin).mockRejectedValue(new Error('invalid verification code'))
+    await mount()
+
+    await act(async () => { await auth().login('alice', 'pw') })
+    await act(async () => {
+      await expect(auth().completeTwoFactor('000000')).rejects.toThrow('invalid verification code')
+    })
+
+    expect(screen.getByTestId('mfa').textContent).toBe('true')
+    expect(screen.getByTestId('user').textContent).toBe('logged-out')
+  })
+
+  it('refuses to verify a code with no challenge in flight', async () => {
+    await mount()
+
+    await act(async () => {
+      await expect(auth().completeTwoFactor('424242')).rejects.toThrow(/expired/)
+    })
+    expect(authApi.completeTwoFactorLogin).not.toHaveBeenCalled()
+  })
+
+  it('drops the challenge on cancel', async () => {
+    vi.mocked(authApi.login).mockResolvedValue({ status: 'mfa_required', mfaToken: 'chal-1' })
+    await mount()
+
+    await act(async () => { await auth().login('alice', 'pw') })
+    expect(screen.getByTestId('mfa').textContent).toBe('true')
+
+    act(() => auth().cancelTwoFactor())
+    expect(screen.getByTestId('mfa').textContent).toBe('false')
   })
 })

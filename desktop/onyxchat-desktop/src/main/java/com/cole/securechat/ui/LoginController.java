@@ -12,11 +12,14 @@ import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
 import javafx.scene.control.PasswordField;
 import javafx.scene.control.TextField;
+import javafx.scene.control.TextInputDialog;
 
+import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.util.concurrent.FutureTask;
 
 import org.json.JSONObject;
 
@@ -60,49 +63,41 @@ public class LoginController {
             String tokenFromServer = null;
 
             try {
-                String url = AppConfig.SERVER_BASE_URL + "/api/v1/login";
-
-                String jsonBody = String.format(
+                JSONObject obj = postJson("/api/v1/login", String.format(
                         "{\"username\":\"%s\",\"password\":\"%s\"}",
                         escapeJson(username),
                         escapeJson(password)
-                );
+                ));
 
-                HttpRequest request = HttpRequest.newBuilder()
-                        .uri(URI.create(url))
-                        .header("Content-Type", "application/json")
-                        .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
-                        .build();
+                // An account with a second factor gets a challenge here instead
+                // of a session: the password is accepted, but no token is issued
+                // until a code is verified at /api/v1/login/2fa.
+                if (obj.optBoolean("mfa_required", false)) {
+                    String mfaToken = obj.getString("mfa_token");
+                    String code = promptForVerificationCode();
 
-                HttpResponse<String> response =
-                        httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-
-                int status = response.statusCode();
-                String body = response.body();
-
-                System.out.println("Login response " + status + ": " + body);
-
-                if (status == 200 || status == 201) {
-                    try {
-                        JSONObject obj = new JSONObject(body);
-                        userIdFromServer = obj.getLong("id");
-                        usernameFromServer = obj.getString("username");
-                        tokenFromServer = obj.getString("token");
-
-                        if (userIdFromServer <= 0 ||
-                                usernameFromServer == null || usernameFromServer.isEmpty() ||
-                                tokenFromServer == null || tokenFromServer.isEmpty()) {
-
-                            errorMessage = "Could not parse login response: " + body;
-                        } else {
-                            success = true;
-                        }
-                    } catch (Exception parseEx) {
-                        parseEx.printStackTrace();
-                        errorMessage = "Failed to parse login JSON: " + parseEx.getMessage();
+                    if (code == null || code.isEmpty()) {
+                        throw new IOException("Sign-in cancelled — a verification code is required.");
                     }
+
+                    obj = postJson("/api/v1/login/2fa", String.format(
+                            "{\"mfa_token\":\"%s\",\"code\":\"%s\"}",
+                            escapeJson(mfaToken),
+                            escapeJson(code)
+                    ));
+                }
+
+                userIdFromServer = obj.getLong("id");
+                usernameFromServer = obj.getString("username");
+                tokenFromServer = obj.getString("token");
+
+                if (userIdFromServer <= 0 ||
+                        usernameFromServer == null || usernameFromServer.isEmpty() ||
+                        tokenFromServer == null || tokenFromServer.isEmpty()) {
+
+                    errorMessage = "Could not parse login response: " + obj;
                 } else {
-                    errorMessage = "Server returned " + status + ": " + body;
+                    success = true;
                 }
 
             } catch (Exception e) {
@@ -154,6 +149,49 @@ public class LoginController {
         }, "login-thread").start();
     }
 
+
+    /**
+     * POSTs a JSON body and returns the parsed response, throwing on any
+     * non-2xx status so the caller has a single failure path.
+     */
+    private JSONObject postJson(String path, String jsonBody) throws Exception {
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(AppConfig.SERVER_BASE_URL + path))
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
+                .build();
+
+        HttpResponse<String> response =
+                httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+
+        int status = response.statusCode();
+        String body = response.body();
+        System.out.println("POST " + path + " -> " + status);
+
+        if (status != 200 && status != 201) {
+            throw new IOException("Server returned " + status + ": " + body);
+        }
+        return new JSONObject(body);
+    }
+
+    /**
+     * Asks for the second factor. Dialogs must be built on the JavaFX
+     * application thread, but the login runs on a worker thread, so the prompt
+     * is handed over as a FutureTask the worker blocks on.
+     *
+     * @return the trimmed code, or null if the user dismissed the dialog
+     */
+    private String promptForVerificationCode() throws Exception {
+        FutureTask<String> prompt = new FutureTask<>(() -> {
+            TextInputDialog dialog = new TextInputDialog();
+            dialog.setTitle("Two-factor verification");
+            dialog.setHeaderText("Enter the 6-digit code from your authenticator app.");
+            dialog.setContentText("Code (or a recovery code):");
+            return dialog.showAndWait().map(String::trim).orElse(null);
+        });
+        Platform.runLater(prompt);
+        return prompt.get();
+    }
 
     private String escapeJson(String s) {
         return s.replace("\\", "\\\\").replace("\"", "\\\"");

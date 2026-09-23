@@ -54,6 +54,12 @@ type fakeUserStore struct {
 	adminCreateErr    error
 	adminResetErr     error
 	updatePasswordErr error
+
+	// Second factor. totpSecrets holds the *encrypted* secret, exactly as the
+	// real column does; the enabled flag lives on the user record itself so
+	// GetUserByUsername reports it the way the real query does.
+	totpSecrets   map[int64]string
+	recoveryCodes map[int64]map[string]bool // hash → still unused
 }
 
 func newFakeUserStore() *fakeUserStore {
@@ -64,6 +70,8 @@ func newFakeUserStore() *fakeUserStore {
 		contactFollowers: make(map[int64][]int64),
 		contacts:         make(map[int64][]*store.Contact),
 		isContactMap:     make(map[[2]int64]bool),
+		totpSecrets:      make(map[int64]string),
+		recoveryCodes:    make(map[int64]map[string]bool),
 		nextID:           1,
 	}
 }
@@ -376,6 +384,85 @@ func (f *fakeUserStore) AdminResetInvite(code string) error {
 
 func (f *fakeUserStore) UpdatePassword(userID int64, newHash string) error {
 	return f.updatePasswordErr
+}
+
+// ─────────────────────────────────────────────────────────────
+// Fake store — second factor
+// ─────────────────────────────────────────────────────────────
+
+func (f *fakeUserStore) GetTOTPEnrollment(userID int64) (*store.TOTPEnrollment, error) {
+	u, err := f.GetUserByID(userID)
+	if err != nil {
+		return nil, err
+	}
+	secret, ok := f.totpSecrets[userID]
+	if !ok || secret == "" {
+		return nil, store.ErrTOTPNotEnrolled
+	}
+	return &store.TOTPEnrollment{Secret: secret, Enabled: u.TOTPEnabled}, nil
+}
+
+func (f *fakeUserStore) SetPendingTOTPSecret(userID int64, encryptedSecret string) error {
+	u, err := f.GetUserByID(userID)
+	if err != nil {
+		return err
+	}
+	if u.TOTPEnabled {
+		return store.ErrTOTPAlreadyEnabled
+	}
+	f.totpSecrets[userID] = encryptedSecret
+	return nil
+}
+
+func (f *fakeUserStore) ConfirmTOTP(userID int64, codeHashes []string) error {
+	u, err := f.GetUserByID(userID)
+	if err != nil {
+		return err
+	}
+	if f.totpSecrets[userID] == "" {
+		return store.ErrTOTPNotEnrolled
+	}
+	u.TOTPEnabled = true
+	return f.ReplaceRecoveryCodes(userID, codeHashes)
+}
+
+func (f *fakeUserStore) DisableTOTP(userID int64) error {
+	u, err := f.GetUserByID(userID)
+	if err != nil {
+		return err
+	}
+	u.TOTPEnabled = false
+	delete(f.totpSecrets, userID)
+	delete(f.recoveryCodes, userID)
+	return nil
+}
+
+func (f *fakeUserStore) ReplaceRecoveryCodes(userID int64, codeHashes []string) error {
+	set := make(map[string]bool, len(codeHashes))
+	for _, h := range codeHashes {
+		set[h] = true
+	}
+	f.recoveryCodes[userID] = set
+	return nil
+}
+
+func (f *fakeUserStore) ConsumeRecoveryCode(userID int64, codeHash string) (bool, error) {
+	set, ok := f.recoveryCodes[userID]
+	if !ok || !set[codeHash] {
+		return false, nil
+	}
+	set[codeHash] = false
+	return true, nil
+}
+
+func (f *fakeUserStore) CountUnusedRecoveryCodes(userID int64) (int, error) {
+	n := 0
+	for _, unused := range f.recoveryCodes[userID] {
+		if unused {
+			n++
+		}
+	}
+	return n, nil
 }
 
 // ─────────────────────────────────────────────────────────────

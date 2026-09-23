@@ -75,6 +75,8 @@ func (s *UserStore) DeleteAccountGDPR(userID int64) (*GDPRDeletionRecord, error)
 			display_name  = 'Deleted User',
 			password_hash = '',
 			public_key    = NULL,
+			totp_secret   = NULL,
+			totp_enabled  = FALSE,
 			deleted_at    = $1
 		WHERE id = $2
 		  AND deleted_at IS NULL
@@ -263,11 +265,11 @@ func (s *UserStore) GetContactFollowerIDs(userID int64) ([]int64, error) {
 func (s *UserStore) GetUserByID(userID int64) (*User, error) {
 	var u User
 	err := s.db.QueryRow(`
-		SELECT id, username, password_hash, COALESCE(public_key, '')
+		SELECT id, username, password_hash, COALESCE(public_key, ''), totp_enabled
 		FROM users
 		WHERE id = $1
 		  AND deleted_at IS NULL
-	`, userID).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.PublicKey)
+	`, userID).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.PublicKey, &u.TOTPEnabled)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, ErrUserNotFound

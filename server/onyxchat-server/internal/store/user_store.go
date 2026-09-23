@@ -18,6 +18,7 @@ type User struct {
 	Username     string
 	PasswordHash string
 	PublicKey    string // ECDH P-256 SPKI, base64-encoded. Empty if not yet set.
+	TOTPEnabled  bool   // true once a second factor has been confirmed
 }
 
 // InviteCode represents a single-use registration invite.
@@ -120,12 +121,12 @@ func (s *UserStore) Ping(ctx context.Context) error {
 
 func (s *UserStore) GetUserByUsername(username string) (*User, error) {
 	row := s.db.QueryRow(
-		`SELECT id, username, password_hash, COALESCE(public_key, '') FROM users WHERE username = $1 AND deleted_at IS NULL`,
+		`SELECT id, username, password_hash, COALESCE(public_key, ''), totp_enabled FROM users WHERE username = $1 AND deleted_at IS NULL`,
 		username,
 	)
 
 	var u User
-	if err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.PublicKey); err != nil {
+	if err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.PublicKey, &u.TOTPEnabled); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, ErrUserNotFound
 		}

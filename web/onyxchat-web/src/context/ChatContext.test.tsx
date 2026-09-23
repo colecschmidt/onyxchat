@@ -51,11 +51,14 @@ import type { WSChatMessage } from '../types'
 // Stable auth state — same object reference across all renders.
 // Must satisfy the full AuthState interface or TS will complain.
 const MOCK_AUTH = {
-  user:            { id: 1, username: 'alice' },
-  isAuthenticated: true,
-  login:           vi.fn(),
-  register:        vi.fn(),
-  logout:          vi.fn(),
+  user:              { id: 1, username: 'alice' },
+  isAuthenticated:   true,
+  mfaRequired:       false,
+  login:             vi.fn(),
+  completeTwoFactor: vi.fn(),
+  cancelTwoFactor:   vi.fn(),
+  register:          vi.fn(),
+  logout:            vi.fn(),
 }
 vi.mocked(AuthContext.useAuth).mockReturnValue(MOCK_AUTH)
 

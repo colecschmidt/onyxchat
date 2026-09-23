@@ -32,6 +32,16 @@ async function tryRefresh(): Promise<string | null> {
   return refreshPromise
 }
 
+// A 401 from any of these is a real answer ("wrong password", "wrong code"),
+// not an expired access token. Retrying them after a refresh is pointless, and
+// on /login/2fa it is harmful: the retry would burn a second attempt from the
+// challenge's small budget for one code the user typed once.
+const NO_REFRESH_RETRY_PATHS = new Set([
+  '/api/v1/refresh',
+  '/api/v1/login',
+  '/api/v1/login/2fa',
+])
+
 async function request<T>(method: string, path: string, body?: unknown, isRetry = false): Promise<T> {
   if (!BASE_URL) throw new Error('VITE_API_URL is not configured')
 
@@ -53,7 +63,7 @@ async function request<T>(method: string, path: string, body?: unknown, isRetry 
     throw err
   }
 
-  if (res.status === 401 && !isRetry && path !== '/api/v1/refresh' && path !== '/api/v1/login') {
+  if (res.status === 401 && !isRetry && !NO_REFRESH_RETRY_PATHS.has(path)) {
     const newToken = await tryRefresh()
     if (newToken) {
       // Retry once with the new access token

@@ -1,8 +1,10 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -84,21 +86,9 @@ func RegisterHandler(userStore userStorer, jwtMgr *JWTManager, rdb *redis.Client
 			return
 		}
 
-		token, err := jwtMgr.Generate(user)
+		token, rt, err := issueSession(r.Context(), jwtMgr, rdb, user)
 		if err != nil {
-			log.Error("[Register] failed to generate JWT", zap.Error(err))
-			writeJSONError(w, http.StatusInternalServerError, "failed to generate token")
-			return
-		}
-
-		rt, err := newRefreshToken()
-		if err != nil {
-			log.Error("[Register] failed to generate refresh token", zap.Error(err))
-			writeJSONError(w, http.StatusInternalServerError, "failed to generate token")
-			return
-		}
-		if err := storeRefreshToken(r.Context(), rdb, rt, user.ID); err != nil {
-			log.Error("[Register] failed to store refresh token", zap.Error(err))
+			log.Error("[Register] failed to issue session", zap.Error(err))
 			writeJSONError(w, http.StatusInternalServerError, "failed to generate token")
 			return
 		}
@@ -121,11 +111,43 @@ type LoginRequest struct {
 	Password string `json:"password"`
 }
 
+// LoginResponse is either a completed session (id/username/token/refresh_token)
+// or — for an account with a second factor — a challenge the client must answer
+// at POST /api/v1/login/2fa. The two sets are mutually exclusive, so the
+// password step leaks nothing about the account beyond "2FA is on" to someone
+// who already has the correct password.
 type LoginResponse struct {
-	ID           int64  `json:"id"`
-	Username     string `json:"username"`
-	Token        string `json:"token"`
-	RefreshToken string `json:"refresh_token"`
+	ID           int64  `json:"id,omitempty"`
+	Username     string `json:"username,omitempty"`
+	Token        string `json:"token,omitempty"`
+	RefreshToken string `json:"refresh_token,omitempty"`
+
+	MFARequired bool   `json:"mfa_required,omitempty"`
+	MFAToken    string `json:"mfa_token,omitempty"`
+}
+
+// issueSession mints the access/refresh token pair that ends a successful
+// login. Shared by password-only login, the second-factor step, and register
+// so the three cannot drift apart.
+func issueSession(
+	ctx context.Context,
+	jwtMgr *JWTManager,
+	rdb *redis.Client,
+	user *store.User,
+) (token string, refreshToken string, err error) {
+	token, err = jwtMgr.Generate(user)
+	if err != nil {
+		return "", "", fmt.Errorf("generate access token: %w", err)
+	}
+
+	refreshToken, err = newRefreshToken()
+	if err != nil {
+		return "", "", fmt.Errorf("generate refresh token: %w", err)
+	}
+	if err := storeRefreshToken(ctx, rdb, refreshToken, user.ID); err != nil {
+		return "", "", fmt.Errorf("store refresh token: %w", err)
+	}
+	return token, refreshToken, nil
 }
 
 func LoginHandler(userStore userStorer, jwtMgr *JWTManager, idLimiter *KeyedLimiter, rdb *redis.Client, log *zap.Logger) http.HandlerFunc {
@@ -166,20 +188,118 @@ func LoginHandler(userStore userStorer, jwtMgr *JWTManager, idLimiter *KeyedLimi
 			return
 		}
 
-		token, err := jwtMgr.Generate(user)
+		// Password is correct but it isn't the whole story — hand back an
+		// opaque challenge instead of a session and wait for the code.
+		if user.TOTPEnabled {
+			mfaToken, err := newMFAChallenge(r.Context(), rdb, mfaChallenge{
+				UserID:   user.ID,
+				Username: user.Username,
+			})
+			if err != nil {
+				log.Error("[Login] failed to create MFA challenge", zap.Int64("user_id", user.ID), zap.Error(err))
+				writeJSONError(w, http.StatusInternalServerError, "failed to start two-factor verification")
+				return
+			}
+			writeJSON(w, http.StatusOK, LoginResponse{MFARequired: true, MFAToken: mfaToken})
+			return
+		}
+
+		token, rt, err := issueSession(r.Context(), jwtMgr, rdb, user)
 		if err != nil {
+			log.Error("[Login] failed to issue session", zap.Error(err))
 			writeJSONError(w, http.StatusInternalServerError, "failed to generate token")
 			return
 		}
 
-		rt, err := newRefreshToken()
-		if err != nil {
-			log.Error("[Login] failed to generate refresh token", zap.Error(err))
-			writeJSONError(w, http.StatusInternalServerError, "failed to generate token")
+		writeJSON(w, http.StatusOK, LoginResponse{
+			ID:           user.ID,
+			Username:     user.Username,
+			Token:        token,
+			RefreshToken: rt,
+		})
+	}
+}
+
+// ─────────────────────────────────────────────────────────────
+// Login — second factor
+// ─────────────────────────────────────────────────────────────
+
+type loginTwoFactorRequest struct {
+	MFAToken string `json:"mfa_token"`
+	Code     string `json:"code"`
+}
+
+// LoginTwoFactorHandler completes a login that stopped at the challenge.
+// It takes either a TOTP code or an unused recovery code; the challenge token
+// is consumed on success and after too many wrong guesses, so a stolen one
+// buys at most a handful of tries at a six-digit code inside five minutes.
+func LoginTwoFactorHandler(
+	userStore userStorer,
+	jwtMgr *JWTManager,
+	cipher *SecretCipher,
+	rdb *redis.Client,
+	log *zap.Logger,
+) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req loginTwoFactorRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "invalid JSON")
 			return
 		}
-		if err := storeRefreshToken(r.Context(), rdb, rt, user.ID); err != nil {
-			log.Error("[Login] failed to store refresh token", zap.Error(err))
+
+		challenge, err := lookupMFAChallenge(r.Context(), rdb, req.MFAToken)
+		if err != nil {
+			switch {
+			case errors.Is(err, errMFAChallengeInvalid):
+				writeJSONError(w, http.StatusUnauthorized, "invalid or expired login challenge")
+			case errors.Is(err, errMFATooManyAttempts):
+				writeJSONError(w, http.StatusTooManyRequests, "too many incorrect codes — please sign in again")
+			default:
+				log.Error("[Login2FA] challenge lookup failed", zap.Error(err))
+				writeJSONError(w, http.StatusInternalServerError, "failed to verify code")
+			}
+			return
+		}
+
+		enr, secret, err := decryptEnrollment(userStore, cipher, challenge.UserID)
+		if err != nil {
+			// The factor was removed between the two steps, or the stored
+			// secret can't be read. Either way this login can't complete.
+			log.Error("[Login2FA] failed to load enrollment",
+				zap.Int64("user_id", challenge.UserID), zap.Error(err))
+			writeJSONError(w, http.StatusUnauthorized, "invalid or expired login challenge")
+			return
+		}
+		if !enr.Enabled {
+			writeJSONError(w, http.StatusUnauthorized, "invalid or expired login challenge")
+			return
+		}
+
+		if err := verifySecondFactor(r.Context(), rdb, userStore, challenge.UserID, secret, req.Code); err != nil {
+			if errors.Is(err, errMFACodeInvalid) {
+				writeJSONError(w, http.StatusUnauthorized, "invalid verification code")
+				return
+			}
+			log.Error("[Login2FA] verification failed",
+				zap.Int64("user_id", challenge.UserID), zap.Error(err))
+			writeJSONError(w, http.StatusInternalServerError, "failed to verify code")
+			return
+		}
+
+		dbStart := time.Now()
+		user, err := userStore.GetUserByID(challenge.UserID)
+		ObserveDBQuery("user_get_by_id", dbStart)
+		if err != nil {
+			writeJSONError(w, http.StatusUnauthorized, "account not found")
+			return
+		}
+
+		// One challenge, one session.
+		_ = discardMFAChallenge(r.Context(), rdb, req.MFAToken)
+
+		token, rt, err := issueSession(r.Context(), jwtMgr, rdb, user)
+		if err != nil {
+			log.Error("[Login2FA] failed to issue session", zap.Error(err))
 			writeJSONError(w, http.StatusInternalServerError, "failed to generate token")
 			return
 		}

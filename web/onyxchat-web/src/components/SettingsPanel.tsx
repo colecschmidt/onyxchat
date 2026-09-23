@@ -3,8 +3,9 @@ import { useAuth } from '../context/AuthContext'
 import { changePassword } from '../api/auth'
 import { deleteAccount } from '../api/contacts'
 import { Avatar, Button, Input, Modal, ModalHeader, StatusMessage, WarningIcon } from './ui'
+import { TwoFactorSettings } from './TwoFactorSettings'
 
-type Section = 'account' | 'danger'
+type Section = 'account' | 'security' | 'danger'
 
 interface SettingsPanelProps {
   onClose: () => void
@@ -82,6 +83,7 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
         }}>
           {([
             { id: 'account', label: 'Account' },
+            { id: 'security', label: 'Security' },
             { id: 'danger', label: 'Danger Zone' },
           ] as { id: Section; label: string }[]).map(({ id, label }) => (
             <button key={id} onClick={() => setSection(id)} style={{
@@ -157,6 +159,10 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
                 </div>
               </div>
             </div>
+          )}
+
+          {section === 'security' && user && (
+            <TwoFactorSettings username={user.username} />
           )}
 
           {section === 'danger' && (
